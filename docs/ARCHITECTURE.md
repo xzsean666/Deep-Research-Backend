@@ -82,10 +82,10 @@ through PostgreSQL row locks. There is no worker-to-worker communication.
 
 ## 5. Core Workflow — Research
 
-`/v1/research` is bounded by a **wait budget** (default 15s, configurable per
-request). This is the key production correction to the original design: a
-request that needs 5 fresh crawls cannot block the caller for however long
-those crawls take.
+`/v1/research` supports two execution modes, chosen per request via
+`execution_mode` (SPEC §3). Both share the same search → normalize → lookup
+→ enqueue pipeline; they differ only in what happens after a job is
+enqueued.
 
 ```mermaid
 flowchart TD
@@ -95,29 +95,67 @@ flowchart TD
     D --> E{Found & not expired?}
     E -->|Yes| F[Attach as cached]
     E -->|No| G[Enqueue crawl_job]
-    G --> H{Wait budget remaining?}
-    H -->|Yes| I[Await job inline, up to remaining budget]
-    H -->|No| J[Mark document as pending]
-    I --> K{Completed in time?}
-    K -->|Yes| F
-    K -->|No| J
+    G --> X{execution_mode}
+    X -->|blocking| I["Await job (concurrently with\nevery other job from this request)"]
+    X -->|background| P["Mark document pending, attach job_id\n— do not wait"]
+    I --> K{Terminal state reached}
+    K -->|completed| F
+    K -->|"dead_letter (max_attempts exhausted)"| J[Mark document failed, with reason]
     F --> L[Merge all documents]
     J --> L
-    L --> M[Return ResearchResult\noverall status: complete / partial]
+    P --> L
+    L --> M[Return ResearchResult]
 ```
 
-Rules:
+### 5.1 `execution_mode: "blocking"` (default)
 
-- A document that is already cached and not expired is **never** re-crawled
-  inline. Only missing or expired documents create jobs.
-- Jobs created but not completed within the wait budget are **not
-  discarded** — they remain queued and a worker completes them
-  asynchronously. The response marks the document `pending` and includes its
-  `job_id` so the caller can poll `GET /v1/jobs/{id}` or re-issue
-  `/v1/research` later, at which point it will be cached.
-- The response always distinguishes `status: "complete"` (everything
-  resolved) from `status: "partial"` (some documents still pending), so the
-  calling agent knows whether it's safe to proceed or should retry.
+Blocks until **every** document reaches a terminal state — `cached`,
+`crawled`, or `failed` (permanently, after retries are exhausted). No
+request-level timeout, no `pending` status: the caller either gets a
+genuinely complete result, or an explicit, final failure reason for the
+specific pages that could not be retrieved.
+
+- All jobs created by a single call are awaited **concurrently** (e.g.
+  `asyncio.gather`, never a loop of sequential awaits) — wall-clock cost is
+  the slowest single job, not the sum of all jobs it triggered.
+- A job only stops being retried when it reaches `dead_letter`
+  (`attempts >= max_attempts`, §9), itself bounded by
+  `CRAWL_FETCH_TIMEOUT_SECONDS` × `JOB_MAX_ATTEMPTS` with backoff (SPEC
+  §9). That per-job retry ceiling — not an arbitrary request-level clock —
+  is what makes a document `failed`.
+- Top-level `status` is `"complete"` (every document resolved
+  successfully) or `"complete_with_failures"` (one or more pages
+  permanently failed). Never `"partial"` — this mode never returns before
+  every document reaches a terminal state.
+
+> **Operational note.** Because there is no request-level cap, worst-case
+> latency is bounded only by the slowest job's own retry ceiling — with
+> the SPEC §9 defaults (`CRAWL_FETCH_TIMEOUT_SECONDS = 20`,
+> `JOB_MAX_ATTEMPTS = 3`, exponential backoff), that's roughly one to two
+> minutes worst case, not seconds. Any reverse proxy, load balancer, or
+> client HTTP timeout in front of the API **must** be configured well
+> above this ceiling when calling in blocking mode, or the connection will
+> be cut before the backend finishes — see
+> [BUILD.md §9](BUILD.md#9-long-lived-request-timeouts).
+
+### 5.2 `execution_mode: "background"`
+
+Returns as soon as the cache lookup finishes — never waits on a crawl.
+Documents that were already cached and fresh come back immediately;
+everything else is enqueued and returned as `status: "pending"` with its
+`job_id`. Top-level `status` is `"complete"` if nothing needed enqueuing,
+otherwise `"partial"`.
+
+The caller resolves pending documents one of two ways:
+
+- Poll `GET /v1/jobs/{id}` for each `job_id`, or
+- Simply call `POST /v1/research` again with the same `query` later — by
+  then the previously-pending documents are cached and come back
+  immediately, no different from any other cache hit.
+
+Use this mode when issuing many research calls up front and collecting
+results later (batch workflows), where blocking on each one serially would
+be far slower than letting the worker pool drain the queue in parallel.
 
 ## 6. Document Lifecycle & Cache Strategy
 

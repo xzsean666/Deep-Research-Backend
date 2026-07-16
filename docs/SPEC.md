@@ -38,7 +38,9 @@ ARCHITECTURE.md), `UPSTREAM_UNAVAILABLE` (SearXNG/Crawl4AI down),
 
 ## 3. `POST /v1/research`
 
-The primary endpoint. Search + cache + bounded crawl + merged result.
+The primary endpoint. Search + cache + crawl + merged result. See
+[ARCHITECTURE.md §5](ARCHITECTURE.md#5-core-workflow--research) for the
+full behavior of each `execution_mode`.
 
 ### Request
 
@@ -47,7 +49,7 @@ The primary endpoint. Search + cache + bounded crawl + merged result.
   "query": "FastAPI async best practices",
   "limit": 5,
   "refresh": false,
-  "wait_budget_seconds": 15,
+  "execution_mode": "blocking",
   "mode": "online"
 }
 ```
@@ -57,18 +59,20 @@ The primary endpoint. Search + cache + bounded crawl + merged result.
 | `query` | string | required | 1–500 chars |
 | `limit` | int | 5 | 1–20 |
 | `refresh` | bool | false | force refresh even if cached & fresh |
-| `wait_budget_seconds` | int | 15 | 1–60, max time to wait on inline crawls |
-| `mode` | enum | `"online"` | `online` \| `local` \| `semantic` (§8 of ARCHITECTURE.md) |
+| `execution_mode` | enum | `"blocking"` | `blocking` \| `background` (ARCHITECTURE §5) |
+| `mode` | enum | `"online"` | retrieval strategy: `online` \| `local` \| `semantic` (§8 of ARCHITECTURE.md) — unrelated to `execution_mode` |
 
-### Response `200`
+### Response `200` — `execution_mode: "blocking"`
+
+Every document is in a terminal state; there is never a `pending` entry.
 
 ```json
 {
   "query": "FastAPI async best practices",
-  "status": "partial",
+  "execution_mode": "blocking",
+  "status": "complete",
   "cached": 3,
-  "crawled": 1,
-  "pending": 1,
+  "crawled": 2,
   "failed": 0,
   "documents": [
     {
@@ -84,16 +88,53 @@ The primary endpoint. Search + cache + bounded crawl + merged result.
       "search_rank": 1,
       "semantic_score": null,
       "fetched_at": "2026-07-10T08:00:00Z",
-      "expires_at": "2026-08-09T08:00:00Z"
+      "expires_at": "2026-08-09T08:00:00Z",
+      "error": null
     }
   ]
 }
 ```
 
-`status` (top-level) is `"complete"` only when every document in
-`documents` has `status` in `{cached, crawled}`. Any `pending` or `failed`
-entry makes it `"partial"`. A `pending` document includes a `job_id` field
-the caller can poll via §6.
+Top-level `status` is `"complete"` when every document has `status` in
+`{cached, crawled}`, or `"complete_with_failures"` when one or more
+documents permanently failed (`status: "failed"`, `error` populated with
+the final failure reason). Both are terminal — the response is always the
+full result set, never partial.
+
+### Response `200` — `execution_mode: "background"`
+
+Returns immediately after the cache lookup; anything not already cached
+comes back as `pending` with a `job_id` instead of content.
+
+```json
+{
+  "query": "FastAPI async best practices",
+  "execution_mode": "background",
+  "status": "partial",
+  "cached": 3,
+  "crawled": 0,
+  "pending": 2,
+  "failed": 0,
+  "documents": [
+    {
+      "id": null,
+      "url": "https://example.com/new-article",
+      "normalized_url": "example.com/new-article",
+      "title": null,
+      "summary": null,
+      "markdown": null,
+      "status": "pending",
+      "job_id": "job-uuid",
+      "search_rank": 2
+    }
+  ]
+}
+```
+
+Top-level `status` is `"complete"` only if nothing needed enqueuing
+(everything was already cached), otherwise `"partial"`. Resolve `pending`
+entries via `GET /v1/jobs/{id}` (§6) or by calling `/v1/research` again
+later with the same `query`.
 
 ## 4. `POST /v1/crawl`
 
@@ -231,8 +272,7 @@ from environment variables. No config is read anywhere else in the codebase.
 | `CRAWL4AI_URL` | required | base URL / endpoint for Crawl4AI |
 | `EMBEDDING_PROVIDER` | required | pluggable, see [INTEGRATIONS.md](INTEGRATIONS.md) |
 | `EMBEDDING_DIM` | required | must match `document_chunks.embedding` column dim |
-| `WAIT_BUDGET_SECONDS_DEFAULT` | `15` | default for `/v1/research` |
-| `WAIT_BUDGET_SECONDS_MAX` | `60` | hard ceiling, request cannot exceed |
+| `RESEARCH_EXECUTION_MODE_DEFAULT` | `"blocking"` | default for `/v1/research` when the request omits `execution_mode` |
 | `CRAWL_MAX_RESPONSE_BYTES` | `5_000_000` | per-page cap |
 | `CRAWL_FETCH_TIMEOUT_SECONDS` | `20` | per-page fetch timeout |
 | `CRAWL_PER_DOMAIN_CONCURRENCY` | `2` | politeness limit |

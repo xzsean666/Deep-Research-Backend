@@ -83,4 +83,26 @@ curl -X POST http://localhost:8000/v1/research \
 - `GET /ready` — readiness probe (checks DB connection)
 
 Point your orchestrator's liveness/readiness checks at these, not at
-`/v1/research` (which has side effects and a wait budget).
+`/v1/research` (which has side effects and, in blocking mode, can run
+long — see §9).
+
+## 9. Long-Lived Request Timeouts
+
+`/v1/research` with `execution_mode: "blocking"` (the default, see
+[ARCHITECTURE.md §5.1](ARCHITECTURE.md#51-execution_mode-blocking-default))
+waits for every document to reach a terminal state with **no
+request-level cap**. Worst case is bounded only by the per-job retry
+ceiling (`CRAWL_FETCH_TIMEOUT_SECONDS × JOB_MAX_ATTEMPTS` with backoff —
+roughly 1–2 minutes with SPEC §9 defaults), not by seconds.
+
+Anything sitting in front of the API must allow for this:
+
+| Layer | What to set |
+|---|---|
+| Reverse proxy (nginx) | `proxy_read_timeout` well above the worst case, e.g. `180s` |
+| Load balancer (ALB/ELB) | idle timeout raised to match, e.g. `180s` |
+| HTTP client used by the calling agent | request timeout raised to match, or use `execution_mode: "background"` instead (§5.2) if the caller can't tolerate a long-lived connection |
+
+If you cannot or do not want to raise infrastructure timeouts that high,
+use `execution_mode: "background"` — it returns as soon as the cache
+lookup finishes and never holds a connection open on a crawl.
