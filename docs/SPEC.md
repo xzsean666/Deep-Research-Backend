@@ -268,8 +268,10 @@ from environment variables. No config is read anywhere else in the codebase.
 | Env var | Default | Notes |
 |---|---|---|
 | `DATABASE_URL` | required | postgres async DSN |
-| `SEARXNG_URL` | required | base URL of SearXNG instance |
-| `CRAWL4AI_URL` | required | base URL / endpoint for Crawl4AI |
+| `SEARCH_PROVIDER` | `"searxng"` | selects the `SearchProvider` adapter (ARCHITECTURE §10) — only value implemented initially, but the point is this is a config flip, not a code change, to add another |
+| `SEARXNG_URL` | required | base URL of the vendored SearXNG service (ARCHITECTURE §13.2) |
+| `CRAWL_PROVIDER` | `"crawl4ai"` | selects the `CrawlProvider` adapter (ARCHITECTURE §10) |
+| `CRAWL4AI_URL` | required | base URL of the vendored Crawl4AI service (ARCHITECTURE §13.2) |
 | `EMBEDDING_PROVIDER` | required | pluggable, see [INTEGRATIONS.md](INTEGRATIONS.md) |
 | `EMBEDDING_DIM` | required | must match `document_chunks.embedding` column dim |
 | `RESEARCH_EXECUTION_MODE_DEFAULT` | `"blocking"` | default for `/v1/research` when the request omits `execution_mode` |

@@ -7,15 +7,29 @@
 
 ## 2. Local Stack
 
-`docker-compose.yml` (to be created in Step 4) defines five services:
+Fully self-hosted — every service in `docker-compose.yml` (to be created in
+Step 4) runs from this stack, no managed/external dependencies:
 
-| Service | Purpose |
-|---|---|
-| `api` | FastAPI app, `main.py` entrypoint |
-| `worker` | job-claim loop, scale with `--scale worker=N` |
-| `postgres` | with `pgvector` extension enabled on init |
-| `searxng` | self-hosted metasearch |
-| `crawl4ai` | crawl/extraction service |
+| Service | Built from | Purpose |
+|---|---|---|
+| `api` | this repo | FastAPI app, `main.py` entrypoint |
+| `worker` | this repo | job-claim loop, scale with `--scale worker=N` |
+| `postgres` | official `pgvector/pgvector:pg16` image, pinned tag | primary datastore; ships with the `vector` extension built in — see [ARCHITECTURE.md §13.1](ARCHITECTURE.md#131-database-image--official-unmodified) for why this one stays an official image |
+| `searxng` | `docker/searxng/Dockerfile`, built from `vendor/searxng` (submodule, pinned commit) | self-hosted metasearch — vendored, not pulled prebuilt, so it can be patched (§13.2) |
+| `crawl4ai` | `docker/crawl4ai/Dockerfile`, built from `vendor/crawl4ai` (submodule, pinned commit) | crawl/extraction service — vendored for the same reason |
+
+Postgres is pinned by image tag. SearXNG and Crawl4AI are pinned by the
+submodule commit their Dockerfile builds from. Neither moves without a
+deliberate, reviewed change — see
+[ARCHITECTURE.md §13.2](ARCHITECTURE.md#132-search--crawl-images--built-from-vendored-source-not-pulled-prebuilt).
+
+Cloning this repo for the first time needs the submodules too:
+
+```bash
+git clone --recurse-submodules <repo-url>
+# or, if already cloned:
+git submodule update --init --recursive
+```
 
 Bring the stack up:
 
@@ -106,3 +120,55 @@ Anything sitting in front of the API must allow for this:
 If you cannot or do not want to raise infrastructure timeouts that high,
 use `execution_mode: "background"` — it returns as soon as the cache
 lookup finishes and never holds a connection open on a crawl.
+
+## 10. Upgrading Self-Hosted Dependencies
+
+Since this is a fully self-hosted stack, upgrading SearXNG, Crawl4AI, or
+Postgres/pgvector is something you do yourself on your own schedule, not
+something a managed provider pushes. The procedure differs by how each is
+deployed (§13.1/§13.2 of ARCHITECTURE.md).
+
+### 10.1 Postgres/pgvector (official image)
+
+1. Check the [pgvector releases](https://github.com/pgvector/pgvector/releases)
+   page for compatibility before bumping.
+2. Bump the pinned tag in `docker-compose.yml` (e.g. `pgvector/pgvector:pg16`
+   → `:pg17`), never move it to `latest`.
+3. Major Postgres version bumps follow standard Postgres major-upgrade
+   practice (dump/restore or `pg_upgrade`) — the pgvector extension
+   version is tied to the image tag, so the extension upgrades with it.
+
+### 10.2 SearXNG / Crawl4AI (vendored, built from source)
+
+These are git submodules under `vendor/`, so "upgrade" means pulling
+upstream forward without losing any local patch committed on the
+`local-patches` branch:
+
+1. Check that project's current docs/release notes — the URL for each is
+   in [INTEGRATIONS.md](INTEGRATIONS.md). Read the changelog for breaking
+   API/response-shape changes before pulling.
+2. Inside the submodule (`vendor/searxng` or `vendor/crawl4ai`), fetch
+   upstream and rebase the local `local-patches` branch onto the new
+   pinned commit/tag:
+   ```bash
+   cd vendor/searxng
+   git fetch upstream
+   git rebase upstream/<new-tag-or-commit>
+   ```
+   Resolve any conflicts between the local patch and upstream's changes at
+   this step — this is the only place a version bump can require actual
+   code changes, and it's isolated to the vendored source itself.
+3. Update the submodule pointer in the parent repo to the new commit, and
+   rebuild the image: `docker compose build searxng` (or `crawl4ai`).
+4. Run that dependency's contract test —
+   `tests/contract/test_searxng_provider.py` or
+   `tests/contract/test_crawl4ai_provider.py` (see
+   [ARCHITECTURE.md §10](ARCHITECTURE.md#10-provider-abstraction--decoupling-from-searxng--crawl4ai))
+   — before running the full suite. It's the fastest signal that the
+   upgrade changed a response shape the adapter relies on.
+5. If the contract test fails on a response-shape change (as opposed to a
+   patch conflict already resolved in step 2), the fix is confined to that
+   one adapter file (`searxng_provider.py` or `crawl4ai_provider.py`) —
+   nothing in `research/`, `worker/`, the API layer, or the database
+   schema should need to change for a version bump alone.
+6. Run the full test suite, then redeploy.

@@ -83,7 +83,7 @@ These apply to every module added to this codebase:
    parent class the reader may not have open; composition keeps it visible.
 8. **Clear entry points** — one main entry point (`main.py`), one
    configuration entry (`app/config/`), explicit module boundaries (see
-   `docs/ARCHITECTURE.md` §13's data-flow rule: `api → services →
+   `docs/ARCHITECTURE.md` §14's data-flow rule: `api → services →
    repositories → models`, never the reverse).
 9. **Explicit dependencies** — imports must be visible and traceable to
    their origin. No global hidden state, no implicit injection magic.

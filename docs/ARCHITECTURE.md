@@ -61,6 +61,10 @@ add a source.
 
 No Redis. No RabbitMQ. No Elasticsearch. No separate vector database.
 
+**Search and Crawl are the two rows most likely to change** — new SearXNG
+or Crawl4AI versions, or a full swap to a different engine. Neither is
+called directly anywhere outside one adapter file each; see §10.
+
 ## 4. High Level Architecture
 
 ```mermaid
@@ -69,10 +73,10 @@ flowchart TB
     API --> RS[Research Service]
     RS --> SS[Search Service]
     RS --> DR[Document Repository]
-    SS --> SX[SearXNG]
+    SS -->|SearchProvider interface| SX[SearXNG adapter] --> SXE[SearXNG]
     DR --> PG[(PostgreSQL\ndocuments / chunks / jobs)]
     PG --> CW[Crawl Worker\n(N instances)]
-    CW --> C4[Crawl4AI]
+    CW -->|CrawlProvider interface| C4[Crawl4AI adapter] --> C4E[Crawl4AI]
     CW --> EMB[Embedding Service]
     EMB --> PG
 ```
@@ -222,7 +226,9 @@ other module is allowed to call Crawl4AI directly.
 Three distinct retrieval modes, all normalized into `Document` results.
 
 ### 8.1 Online Search
-`Keyword → SearXNG → URLs` — discovers new pages. Used by `/v1/research`.
+`Keyword → SearchProvider (SearXNG adapter) → URLs` — discovers new pages.
+Used by `/v1/research`. See §10 for why this goes through an interface
+rather than calling SearXNG directly.
 
 ### 8.2 Local Full Text Search
 `Keyword → PostgreSQL tsvector → Documents` — searches already-crawled
@@ -261,17 +267,86 @@ pending → running → completed
 Worker pipeline per job:
 
 ```
-Claim job → Guard URL (§7) → Crawl4AI → Markdown + Metadata
+Claim job → Guard URL (§7) → CrawlProvider (Crawl4AI adapter) → Markdown + Metadata
    → Chunk → Embed chunks → Upsert Document + Chunks (transaction)
    → mark job completed
 ```
+
+The worker calls `CrawlProvider.crawl(url)`, never the Crawl4AI SDK/HTTP
+client directly — see §10.
 
 Failures (timeout, guard rejection, extraction error) are recorded on the
 job row with an error reason and retried with exponential backoff up to
 `max_attempts`, after which the job moves to `dead_letter` and is visible via
 `GET /v1/jobs?status=dead_letter` for operator inspection.
 
-## 10. Result Composition for AI Consumption
+## 10. Provider Abstraction — Decoupling from SearXNG & Crawl4AI
+
+SearXNG and Crawl4AI are both fast-moving projects and both fully
+replaceable in principle (a different metasearch engine, a different
+crawler). Neither should require touching `research/`, `worker/`, the API
+layer, or the `documents` schema when its version — or the project itself
+— changes. This is enforced with one adapter per dependency, not by
+convention.
+
+### 10.1 The rule
+
+No module outside `services/search/` imports anything SearXNG-specific.
+No module outside `services/crawl/` imports anything Crawl4AI-specific.
+Everyone else depends only on a small interface and a stable internal
+result shape:
+
+```
+app/services/search/
+├── provider.py            # SearchProvider Protocol + SearchResult dataclass
+│                           #   (url, title, snippet, rank) — the stable shape
+├── searxng_provider.py    # SearXNGSearchProvider(SearchProvider)
+│                           #   the ONLY file that knows SearXNG's JSON response shape
+└── __init__.py             # get_search_provider() factory, reads SEARCH_PROVIDER config
+
+app/services/crawl/
+├── provider.py            # CrawlProvider Protocol + CrawlResult dataclass
+│                           #   (markdown, title, metadata) — the stable shape
+├── crawl4ai_provider.py   # Crawl4AICrawlProvider(CrawlProvider)
+│                           #   the ONLY file that knows Crawl4AI's API/SDK shape
+├── url_guard.py            # SSRF validation (§7) — provider-agnostic, unchanged either way
+└── __init__.py              # get_crawl_provider() factory, reads CRAWL_PROVIDER config
+```
+
+`services/research/` and `services/worker/` call `SearchProvider.search(...)`
+and `CrawlProvider.crawl(...)` through the factory — never
+`SearXNGSearchProvider` or `Crawl4AICrawlProvider` by name. Swapping either
+dependency, or upgrading it across a breaking API change, means editing one
+adapter file; nothing that calls through the interface needs to change.
+
+### 10.2 What an upgrade actually touches
+
+| Change | What you edit |
+|---|---|
+| SearXNG minor/patch upgrade, response shape unchanged | Nothing — bump the pinned image tag in `docker-compose.yml` |
+| SearXNG version bumps its JSON response shape | `searxng_provider.py` only, until it maps back to `SearchResult` |
+| Swap SearXNG for a different search engine entirely | New `*_provider.py` implementing `SearchProvider`, flip `SEARCH_PROVIDER` config |
+| Crawl4AI upgrade (any of the above, same reasoning) | `crawl4ai_provider.py` only |
+
+### 10.3 Guarding against silent breakage
+
+An adapter that silently starts mis-mapping fields after an upstream
+upgrade is worse than one that fails loudly, so each adapter has a
+dedicated **contract test** (`tests/contract/test_searxng_provider.py`,
+`tests/contract/test_crawl4ai_provider.py`) that asserts a real (or
+recorded fixture) response from that dependency maps correctly to
+`SearchResult` / `CrawlResult`. Run these first after bumping a pinned
+version in `docker-compose.yml`, before running the rest of the suite —
+they're the fastest signal that an upgrade changed the response shape.
+
+Image tags for `searxng` and `crawl4ai` in `docker-compose.yml` are always
+pinned to a specific version, never `latest` — an upgrade is a deliberate,
+reviewable change (bump tag → run contract tests → commit), not something
+that happens implicitly on a redeploy. See
+[INTEGRATIONS.md](INTEGRATIONS.md) for where to check each project's
+current release notes before bumping.
+
+## 11. Result Composition for AI Consumption
 
 This is the actual product: a single, analyzable payload. The response
 schema (full detail in [SPEC.md](SPEC.md)) makes three things explicit for
@@ -289,7 +364,7 @@ the calling agent:
   multi-document research response usable directly in an LLM context window
   without the agent having to pre-filter.
 
-## 11. Observability
+## 12. Observability
 
 - Structured (JSON) logs, one correlation `request_id` threaded through
   Search → Lookup → Crawl → Store for a given `/v1/research` call.
@@ -298,19 +373,72 @@ the calling agent:
 - `/health` (liveness) and `/ready` (DB connectivity) endpoints on both API
   and worker.
 
-## 12. Deployment Topology
+## 13. Deployment Topology
 
-Single docker-compose stack for local/small production:
+Fully self-hosted — every component runs from this stack's own
+docker-compose, no managed/external services:
 
 ```
-services: api (N replicas), worker (M replicas), postgres (with pgvector
-extension), searxng, crawl4ai
+services: api (N replicas), worker (M replicas),
+          postgres (pgvector/pgvector official image — §13.1),
+          searxng (built from vendored source — §13.2),
+          crawl4ai (built from vendored source — §13.2)
 ```
 
 API and worker scale independently. PostgreSQL is the only stateful service
 and the only thing that needs backup/HA planning. See [BUILD.md](BUILD.md).
 
-## 13. Project Structure
+### 13.1 Database image — official, unmodified
+
+Postgres uses the [`pgvector/pgvector`](https://github.com/pgvector/pgvector#docker)
+official image (e.g. `pgvector/pgvector:pg16`), **not** the plain
+`postgres` image with the extension installed by hand — `CREATE EXTENSION
+vector` in the init migration then just works, with no image-build step or
+manual `apt install postgresql-XX-pgvector` in this repo to maintain.
+Upgrading the Postgres major version means bumping this one tag; the
+extension ships with it. There is no need to patch Postgres itself, so an
+official prebuilt image is the right call here.
+
+### 13.2 Search & Crawl images — built from vendored source, not pulled prebuilt
+
+SearXNG and Crawl4AI are different: they may need local patches (a search
+engine config tweak, a crawler extraction fix) that an official prebuilt
+image can't accommodate. So instead of `image: searxng/searxng:<tag>` /
+`image: unclecode/crawl4ai:<tag>`, both are built from source that this
+repo controls directly:
+
+```
+vendor/
+├── searxng/      # git submodule, pinned to a specific upstream commit
+└── crawl4ai/     # git submodule, pinned to a specific upstream commit
+
+docker/
+├── searxng/Dockerfile     # FROM ... builds the image from vendor/searxng
+└── crawl4ai/Dockerfile    # FROM ... builds the image from vendor/crawl4ai
+```
+
+Each submodule is checked out on a local branch (e.g. `local-patches`)
+based on a specific pinned upstream commit/tag. Any modification this
+project needs lives as a commit on that local branch — never as an
+uncommitted diff — so it survives an upgrade and is reviewable like any
+other change.
+
+This does not weaken the decoupling in §10: `SearchProvider` and
+`CrawlProvider` only depend on each project's HTTP contract, which is the
+same whether the running container came from an official image or a local
+patched build. Vendoring source is about *being able to change the
+dependency's behavior*; the provider interface is about *isolating the
+rest of the app from that dependency's shape*. Both apply at once.
+
+Upgrade procedure for a vendored dependency — see
+[BUILD.md §10](BUILD.md#10-upgrading-self-hosted-dependencies).
+
+All four self-hosted images (`postgres`/pgvector, `searxng`, `crawl4ai`,
+plus this app's own `api`/`worker` image) are version-pinned, never
+`latest` — for Postgres that means an image tag; for SearXNG/Crawl4AI that
+means the submodule commit their Dockerfile builds from.
+
+## 14. Project Structure
 
 ```
 deep-research-backend/
@@ -318,8 +446,8 @@ deep-research-backend/
 │   ├── api/                 # FastAPI routers (thin, no business logic)
 │   ├── services/
 │   │   ├── research/        # orchestrates search + lookup + crawl + merge
-│   │   ├── search/          # SearXNG client, local FTS, semantic search
-│   │   ├── crawl/           # Crawl4AI client, url_guard (§7), chunking
+│   │   ├── search/          # SearchProvider interface + SearXNG adapter (§10), local FTS, semantic search
+│   │   ├── crawl/           # CrawlProvider interface + Crawl4AI adapter (§10), url_guard (§7), chunking
 │   │   ├── document/        # normalization, TTL policy, upsert
 │   │   └── worker/          # job claim loop, retry/backoff
 │   ├── repositories/        # SQLAlchemy queries only, no business logic
@@ -330,7 +458,15 @@ deep-research-backend/
 │   └── utils/
 ├── migrations/                 # Alembic
 ├── tests/
-├── docs/                        # this directory
+│   └── contract/                # per-provider contract tests (§10.3)
+├── vendor/                       # git submodules, pinned commit + local patch branch (§13.2)
+│   ├── searxng/
+│   └── crawl4ai/
+├── docker/                       # Dockerfiles building searxng/crawl4ai from vendor/ (§13.2)
+│   ├── searxng/Dockerfile
+│   └── crawl4ai/Dockerfile
+├── docs/                          # this directory
+├── docker-compose.yml
 ├── AGENT.md
 └── main.py
 ```
@@ -339,14 +475,14 @@ Module boundary rule: `api/` never imports `repositories/` directly, and
 `repositories/` never imports `services/`. Data flows one direction:
 `api → services → repositories → models`.
 
-## 14. Future Extensions
+## 15. Future Extensions
 
 No architectural change is required to add: PDF import, GitHub repository
 ingestion, RSS, sitemap crawling, Notion, Confluence, AI summary
 post-processing, multi-language support, or an MCP server front-end — each
 is a new *source* that produces a `Document` through the existing pipeline.
 
-## 15. Design Philosophy
+## 16. Design Philosophy
 
 ```
 Search → Document → Job → API
