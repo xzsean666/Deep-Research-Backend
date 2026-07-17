@@ -1,9 +1,11 @@
-# Explicit project name — this, not the checkout directory name, is what
-# prefixes every container/volume/network below (e.g. `docker ps` shows
-# `deep-research-backend-api-1`, `deep-research-backend-postgres-1`, ...).
-# Keeps that prefix stable and greppable on a shared host no matter what
-# the repo's local folder is named.
-name: deep-research-backend
+# Project/container prefix — override by setting PROJECT_PREFIX in .env;
+# defaults to deep-research-backend if unset. This, not the checkout
+# directory name, is what prefixes every container/volume/network below
+# (e.g. `docker ps` shows `${PROJECT_PREFIX}-api`, `${PROJECT_PREFIX}-postgres`,
+# ...) — stable and greppable on a shared host no matter what the repo's
+# local folder is named, and distinguishable if you ever run two checkouts
+# side by side with different PROJECT_PREFIX values.
+name: ${PROJECT_PREFIX:-deep-research-backend}
 
 services:
   # postgres, searxng, and crawl4ai are internal-only: no `ports:` mapping,
@@ -19,7 +21,7 @@ services:
   postgres:
     # Official image, not vendored — ARCHITECTURE.md §13.1.
     image: pgvector/pgvector:pg16
-    container_name: deep-research-backend-postgres
+    container_name: ${PROJECT_PREFIX:-deep-research-backend}-postgres
     environment:
       POSTGRES_DB: deep_research
       POSTGRES_USER: postgres
@@ -37,18 +39,18 @@ services:
   searxng:
     build:
       context: ./vendor/searxng
-    container_name: deep-research-backend-searxng
+    container_name: ${PROJECT_PREFIX:-deep-research-backend}-searxng
 
   # Vendored, not pulled prebuilt — ARCHITECTURE.md §13.2. Requires the
   # vendor/crawl4ai submodule to be populated first (see its README).
   crawl4ai:
     build:
       context: ./vendor/crawl4ai
-    container_name: deep-research-backend-crawl4ai
+    container_name: ${PROJECT_PREFIX:-deep-research-backend}-crawl4ai
 
   api:
     build: .
-    container_name: deep-research-backend-api
+    container_name: ${PROJECT_PREFIX:-deep-research-backend}-api
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_research
@@ -64,7 +66,7 @@ services:
     build: .
     # No container_name: a fixed name can't be reused across replicas, and
     # this service is scaled (see below) — it still gets the same
-    # deep-research-backend-worker-N prefix automatically from `name:` above.
+    # ${PROJECT_PREFIX}-worker-N prefix automatically from `name:` above.
     command: ["python", "-m", "app.worker_main"]
     env_file: .env
     environment:
