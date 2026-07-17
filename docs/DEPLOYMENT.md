@@ -14,7 +14,7 @@
 | Path | `/home/apps/deep-research-backend` |
 | Deployed as | root, via `docker compose` |
 | Shared host | Yes — this server runs several unrelated projects (trading bots, data collectors). `PROJECT_PREFIX=deep-research-backend` (docker-compose.yml) keeps every container/volume for this deployment distinctly named and greppable: `docker ps \| grep deep-research-backend`. |
-| Exposed | Only `api`, on `0.0.0.0:10001` (`API_PORT=10001` in `.env` — changed from the `8000` default to avoid colliding with other projects' ports on this shared host; container-internal port is still 8000). `postgres`/`searxng`/`crawl4ai` publish no host ports — reachable only from `api`/`worker` over the internal compose network. |
+| Exposed | Only `api`, on `0.0.0.0:10010` (`API_PORT=10010` in `.env` — changed from the `8000` default to avoid colliding with other projects' ports on this shared host; container-internal port is still 8000). `postgres`/`searxng`/`crawl4ai` publish no host ports — reachable only from `api`/`worker` over the internal compose network. |
 
 ## What's running
 
@@ -27,7 +27,7 @@ docker compose ps
 | `deep-research-backend-postgres` | `pgvector/pgvector:pg16` (official) | migrations applied (`alembic upgrade head` → revision `0001`) |
 | `deep-research-backend-searxng` | built from `docker/searxng/Dockerfile` + `vendor/searxng` (submodule, commit `9f9c0081`) | JSON output enabled via `deploy/searxng/settings.yml` |
 | `deep-research-backend-crawl4ai` | built from `vendor/crawl4ai` (submodule, commit `7e801521`) | `CRAWL4AI_API_TOKEN` set — see below |
-| `deep-research-backend-api` | built from this repo's `Dockerfile` | host port `10001` published (`API_PORT` in `.env`), container-internal port stays `8000` |
+| `deep-research-backend-api` | built from this repo's `Dockerfile` | host port `10010` published (`API_PORT` in `.env`), container-internal port stays `8000` |
 | `deep-research-backend-worker-1` | same image as `api`, `python -m app.worker_main` | scale with `docker compose up -d --scale worker=N` |
 
 All five have `restart: unless-stopped` — survives a host reboot or an
@@ -51,10 +51,12 @@ individual container crash without manual intervention.
    INSERT INTO api_keys (id, key_hash, label, rate_limit_per_minute)
    VALUES (gen_random_uuid(), '<sha256 of the raw key>', 'e2e-test-key', 60);
    ```
-7. Host port later changed from the `8000` default to `10001`
-   (`API_PORT=10001` in `.env`) to avoid colliding with other projects on
-   this shared host — `docker-compose.yml`'s `api.ports` reads
-   `${API_PORT:-8000}:8000`, container-internal port unchanged.
+7. Host port later changed from the `8000` default. `10001` was tried
+   first but was already taken by another project on this shared host
+   (`quant-trade-api-test4-backtest`, mapped `10001->8001`); settled on
+   `10010` (confirmed free via `ss -tln` before use) — `API_PORT=10010` in
+   `.env`. `docker-compose.yml`'s `api.ports` reads `${API_PORT:-8000}:8000`,
+   container-internal port unchanged.
 
 ## Bugs found and fixed by deploying for real
 
