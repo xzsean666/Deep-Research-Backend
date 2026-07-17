@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     crawl_provider: CrawlProviderName = CrawlProviderName.CRAWL4AI
     crawl4ai_url: str
+    # Crawl4AI refuses to bind beyond loopback without this (see
+    # vendor/crawl4ai/deploy/docker/entrypoint.sh) — required once it's
+    # reached over the docker network rather than from its own container.
+    # Sent as `Authorization: Bearer <token>` by Crawl4AICrawlProvider.
+    crawl4ai_api_token: str
 
     research_execution_mode_default: ExecutionMode = ExecutionMode.BLOCKING
 

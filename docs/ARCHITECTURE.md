@@ -435,6 +435,14 @@ the container) to enable JSON output, which upstream disables by default —
 `SearchProvider`'s SearXNG adapter depends on `?format=json`. See that
 file and the `searxng` service in `docker-compose.yml`.
 
+Crawl4AI needed one thing too, also only discovered by deploying it for
+real: its own entrypoint refuses to bind beyond `127.0.0.1` unless
+`CRAWL4AI_API_TOKEN` is set — which would make it unreachable from
+`api`/`worker` over the docker network, not just from the host. Setting it
+also turns on Bearer-token auth enforcement on every Crawl4AI request, which
+`Crawl4AICrawlProvider` sends. See SPEC.md §9 and
+[docs/DEPLOYMENT.md](DEPLOYMENT.md) for how this was found.
+
 Each submodule is checked out on a local branch (e.g. `local-patches`)
 based on a specific pinned upstream commit/tag. Any modification this
 project needs lives as a commit on that local branch — never as an

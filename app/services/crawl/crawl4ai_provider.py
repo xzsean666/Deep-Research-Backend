@@ -26,16 +26,22 @@ class Crawl4AICrawlProvider:
         *,
         fetch_timeout_seconds: float,
         max_response_bytes: int,
+        api_token: str,
         client: httpx.AsyncClient | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._max_response_bytes = max_response_bytes
+        self._api_token = api_token
         self._client = client or httpx.AsyncClient(timeout=fetch_timeout_seconds)
 
     async def crawl(self, url: str) -> CrawlResult:
         await guard_url(url)
 
-        response = await self._client.post(f"{self._base_url}/crawl", json={"urls": [url]})
+        response = await self._client.post(
+            f"{self._base_url}/crawl",
+            json={"urls": [url]},
+            headers={"Authorization": f"Bearer {self._api_token}"},
+        )
         response.raise_for_status()
         payload = response.json()
 

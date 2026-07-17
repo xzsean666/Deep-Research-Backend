@@ -272,8 +272,8 @@ from environment variables. No config is read anywhere else in the codebase.
 | `SEARXNG_URL` | required | base URL of the vendored SearXNG service (ARCHITECTURE §13.2) |
 | `CRAWL_PROVIDER` | `"crawl4ai"` | selects the `CrawlProvider` adapter (ARCHITECTURE §10) |
 | `CRAWL4AI_URL` | required | base URL of the vendored Crawl4AI service (ARCHITECTURE §13.2) |
-| `EMBEDDING_PROVIDER` | required | pluggable, see [INTEGRATIONS.md](INTEGRATIONS.md) |
-| `EMBEDDING_DIM` | required | must match `document_chunks.embedding` column dim |
+| `CRAWL4AI_API_TOKEN` | required | Crawl4AI refuses to bind beyond loopback without this, and enforces it as a Bearer auth header on every request — discovered deploying it for real, not part of the original design. See `vendor/crawl4ai/deploy/docker/entrypoint.sh`. |
+| `EMBEDDING_PROVIDER` / `EMBEDDING_DIM` | *not implemented* | semantic search is deferred post-MVP (embeddings not built yet) — no corresponding `Settings` field exists yet; see [nextsession.md](nextsession.md) |
 | `RESEARCH_EXECUTION_MODE_DEFAULT` | `"blocking"` | default for `/v1/research` when the request omits `execution_mode` |
 | `CRAWL_MAX_RESPONSE_BYTES` | `5_000_000` | per-page cap |
 | `CRAWL_FETCH_TIMEOUT_SECONDS` | `20` | per-page fetch timeout |
