@@ -31,6 +31,19 @@ git clone --recurse-submodules <repo-url>
 git submodule update --init --recursive
 ```
 
+SearXNG's build needs one generated file that a fresh clone doesn't have —
+`searx/version_frozen.py`, normally produced by its own release tooling.
+Without it, `docker compose build searxng` fails on a `COPY` step. Generate
+it once after the submodule is populated:
+
+```bash
+cd vendor/searxng && python3 searx/version.py freeze && cd ../..
+```
+
+(If the submodule's ownership differs from the user running Docker — e.g.
+after an `rsync` deploy — `git` will also refuse with "dubious ownership";
+run `git config --global --add safe.directory` for the path it names.)
+
 Bring the stack up:
 
 ```bash

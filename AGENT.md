@@ -20,6 +20,7 @@ Optimize for that, not for human aesthetic preference.
 | How to run, migrate, test, deploy | [docs/BUILD.md](docs/BUILD.md) |
 | Official docs URLs for every external dependency | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | What's done, what's next, open risks | [docs/nextsession.md](docs/nextsession.md) |
+| Live deployment record — what's running where, bugs found by deploying, how to operate it | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 
 **Always start a new session by reading `docs/nextsession.md`.** It is the
 handoff between sessions and is the only file guaranteed to reflect current
