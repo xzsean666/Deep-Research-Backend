@@ -62,6 +62,19 @@ individual container crash without manual intervention.
    in the E2E results table below was true *at the time it was tested*,
    before this change; the seeded `e2e-test-key` still exists and works if
    `REQUIRE_API_KEY` is ever flipped back to `true`.
+9. `JOB_MAX_ATTEMPTS` changed from the repo's default `3` to `1` on this
+   deployment, by request — investigated 4 `dead_letter` jobs (all target
+   sites' own anti-bot protection: Reddit's 403 bot-block, a Cloudflare JS
+   challenge on a Medium-hosted page — confirmed via Crawl4AI's own logs,
+   not a Crawl4AI stability issue; container had `RestartCount=0`, healthy,
+   591MiB/4GiB memory, zero tracebacks). Since a bot-block doesn't resolve
+   on retry, the preference here is fail-fast: one attempt per page, no
+   backoff wait, move on to whatever else can be crawled. Confirmed live:
+   a batch with one Reddit URL now returns in ~6.5s instead of ~34s, with
+   that one URL marked `failed` and every other URL in the batch still
+   `crawled` normally. This is a per-deployment override, not a change to
+   the repo's default (`JOB_MAX_ATTEMPTS=3` in `.env.example` — a general
+   deployment may still want retries for transient failures).
 
 ## Bugs found and fixed by deploying for real
 
@@ -132,7 +145,7 @@ All against the live stack, real SearXNG search and real Crawl4AI crawls
 | `mode=semantic` | `501 NOT_IMPLEMENTED` (clean, not a crash) |
 | `execution_mode=background` | Returns in ~1.5s (search latency only) with `pending` + `job_id` |
 | Same background query, mid-crawl | Reused the same `job_id` (dedup fix confirmed) |
-| A page that genuinely fails to crawl (Reddit, bot-blocked) | 3 attempts with backoff, `dead_letter`, surfaced via `GET /v1/jobs?status=dead_letter` |
+| A page that genuinely fails to crawl (Reddit, bot-blocked) | 3 attempts with backoff, `dead_letter`, surfaced via `GET /v1/jobs?status=dead_letter` — true when tested with the repo default `JOB_MAX_ATTEMPTS=3`; this deployment later moved to `JOB_MAX_ATTEMPTS=1` (item 9 above), confirmed to fail straight to `dead_letter` after one attempt, ~6.5s total for a batch instead of ~34s |
 | `GET /v1/documents`, `/v1/documents/search`, `/v1/documents/{id}` | All correct |
 | 404 on nonexistent document/job | `404 NOT_FOUND` |
 | Container resilience | All 5 services `Up`/`healthy` after ~20 min running, `restart: unless-stopped` confirmed in compose config |
