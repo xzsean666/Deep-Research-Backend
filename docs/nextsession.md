@@ -4,77 +4,102 @@
 
 ## Current Progress
 
-Repository is freshly initialized, zero commits before this session.
-Steps 1–3 of the protocol in [AGENT.md](../AGENT.md) are complete:
-architecture design, specification docs, and this handoff file. **No
-implementation code exists yet.** Step 4 (implementation) has not been
-authorized.
+MVP implementation (Step 4) is done and unit/contract-tested (38 tests,
+`uv run pytest`; `uv run ruff check .` clean). Semantic search is
+explicitly out of scope for this MVP — deferred until an embedding
+provider is chosen (was going to use hosted API keys, per user decision).
+**Not yet verified**: nothing has been run against a live Postgres,
+SearXNG, or Crawl4AI — see "Not Yet Verified" below before trusting this
+in an actual deployment.
 
 ## Architecture Summary
 
 Deep Research Backend = one API (`POST /v1/research`) that turns a keyword
-into a complete, AI-analyzable result set by transparently combining
-SearXNG search, a PostgreSQL-backed document cache, bounded-time Crawl4AI
-crawling, and pgvector semantic search. Single infrastructure dependency:
-PostgreSQL (queue, FTS, vector, metadata all in one place). Full detail in
-[ARCHITECTURE.md](ARCHITECTURE.md).
+into a complete, AI-analyzable result set by combining SearXNG search, a
+PostgreSQL-backed document cache, and Crawl4AI crawling behind a
+`CrawlProvider`/`SearchProvider` adapter layer. Two execution modes:
+`blocking` (waits for every document to reach a terminal state, no
+request-level timeout) and `background` (returns immediately with
+`pending` + `job_id`). Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Completed Parts
 
-- [x] `docs/ARCHITECTURE.md` — system design, data flow, module boundaries
-- [x] `docs/SPEC.md` — API contracts, data models, config reference
-- [x] `docs/BUILD.md` — build/run/deploy instructions
-- [x] `docs/INTEGRATIONS.md` — external project docs registry
-- [x] `AGENT.md` — AI operating instructions for this repo
-- [ ] Any code under `app/`
-- [ ] `docker-compose.yml`
-- [ ] `migrations/`
+- [x] Docs: `ARCHITECTURE.md`, `SPEC.md`, `BUILD.md`, `INTEGRATIONS.md`, `AGENT.md`
+- [x] `app/config/` — `Settings` (pydantic-settings), matches SPEC §9 minus embedding config
+- [x] `app/database/` — async engine/session
+- [x] `app/models/` — `Document`, `CrawlJob`, `ApiKey` (no `document_chunks`/embeddings — deferred)
+- [x] `migrations/versions/0001_initial.py` — hand-written (no live DB to autogenerate against), enables `pgvector` extension, creates all 3 tables
+- [x] `app/services/document/` — `normalize_url` (ARCHITECTURE §6.1), `classify_source_type` + `compute_expires_at` (§6.2)
+- [x] `app/services/crawl/` — `url_guard.guard_url` (SSRF, §7), `CrawlProvider` protocol + `Crawl4AICrawlProvider` adapter
+- [x] `app/services/search/` — `SearchProvider` protocol + `SearXNGSearchProvider` adapter, `local_fts.search_local`
+- [x] `app/repositories/` — document/crawl_job/api_key repositories, `FOR UPDATE SKIP LOCKED` job claim
+- [x] `app/services/worker/loop.py` + `app/worker_main.py` — claim → crawl → upsert → complete/fail(+backoff)/dead_letter
+- [x] `app/services/research/research_service.py` — blocking/background orchestration (ARCHITECTURE §5)
+- [x] `app/api/` — all routers (`research`, `crawl`, `documents`, `jobs`, `health`), auth dependency, error envelope + handlers
+- [x] `main.py` — FastAPI app, request-id middleware, exception handlers, routers wired
+- [x] `Dockerfile` (api/worker, same image), `docker-compose.yml` (5 services)
+- [x] `tests/unit/` (normalize, ttl, url_guard, worker loop, research service, API wiring) + `tests/contract/` (SearXNG/Crawl4AI adapters, via `httpx.MockTransport` fixtures)
 
-## Pending Tasks (Step 4, only on explicit request)
+## Not Yet Verified
 
-Implement in this order — each step should be independently testable
-before moving to the next, per the Incremental Buildability principle:
+No Docker daemon or live Postgres/SearXNG/Crawl4AI was available in the
+implementation session — verify these before relying on this build:
 
-1. **Config** — `app/config/` (`Settings` from pydantic-settings, per SPEC §9)
-2. **Database bootstrap** — `app/database/`, initial Alembic migration
-   creating `documents`, `document_chunks`, `crawl_jobs`, `api_keys` +
-   `CREATE EXTENSION vector`
-3. **Models** — `app/models/` (SQLAlchemy ORM matching SPEC §8)
-4. **Repositories** — `app/repositories/` (CRUD + the normalized-URL lookup
-   query + the `FOR UPDATE SKIP LOCKED` job-claim query)
-5. **URL normalization utility** — `app/services/document/normalize.py`
-   (ARCHITECTURE §6.1) — pure function, easiest to unit test first
-6. **URL guard (SSRF)** — `app/services/crawl/url_guard.py`
-   (ARCHITECTURE §7) — pure function, unit test with known private ranges
-7. **Search service** — SearXNG client + local FTS + semantic search
-8. **Crawl service** — Crawl4AI client wired through the URL guard
-9. **Worker** — job claim loop, retry/backoff, dead-letter transition
-10. **Research service** — orchestrates §5 of ARCHITECTURE.md (the wait
-    budget logic is the trickiest part — needs its own focused test)
-11. **API routers** — thin FastAPI routes per SPEC.md, wired to services
-12. **docker-compose.yml** + `.env.example`
-13. **Tests**: unit tests alongside each of the above; integration tests
-    last, once the compose stack exists
+1. **`docker compose config` parses cleanly** (checked) but **no image was
+   actually built** — `docker build .` was not run against a live daemon.
+   Build the `api` image and confirm the `uv sync --locked` steps succeed.
+2. **The Alembic migration was never applied to a real Postgres.** Run
+   `docker compose up -d postgres && alembic upgrade head` and confirm the
+   generated tsvector `Computed(...)` column and GIN index actually create
+   correctly — this is the one piece of the migration most likely to need
+   a Postgres-version-specific tweak.
+3. **`vendor/searxng` and `vendor/crawl4ai` are empty** — only a README
+   with setup instructions in each. The `searxng`/`crawl4ai` services in
+   `docker-compose.yml` will fail to build until the submodules are added
+   (see each README). `api`, `worker`, and `postgres` don't depend on them
+   to build/start.
+4. **No integration test suite yet** — everything is unit/contract-level
+   with mocked repositories/providers. `BUILD.md §5` describes the
+   intended integration-test setup once the compose stack is real.
+
+## Known Gaps (surfaced deliberately, not oversights)
+
+- **SSRF redirect-hop revalidation is incomplete.** `guard_url` checks the
+  initial URL before handing it to Crawl4AI, but Crawl4AI performs the
+  actual fetch (including redirects) itself — we can't currently
+  revalidate each hop. See the comment in `crawl4ai_provider.py` and
+  `vendor/crawl4ai/README.md`. Closing this needs either a Crawl4AI-side
+  network policy/allowlist or fetching directly instead of delegating.
+- **No rate limiting enforced.** `api_keys.rate_limit_per_minute` exists in
+  the schema and SPEC.md documents `RATE_LIMITED`, but no limiter is
+  wired up — auth (valid key required) works, quota enforcement doesn't.
+  A real distributed limiter needs a shared store; doing this correctly
+  without Redis (Postgres-counter-based) is real scope, not a quick add.
+- **`markdown_truncated` threshold (200,000 bytes) is a hardcoded constant**
+  in `research_service.py`, not a `Settings` field — promote it if a need
+  to tune it shows up.
 
 ## Next Actions
 
-1. User reviews `docs/ARCHITECTURE.md` and `docs/SPEC.md` and either
-   approves or requests changes.
-2. Once approved, user explicitly requests Step 4 to begin — start at item
-   1 above, one commit per completed item (`feat: <item>`), no push.
+1. Get a real Postgres running (`docker compose up -d postgres`, or any
+   local Postgres 16+ with `pgvector`) and run `alembic upgrade head` —
+   this is the fastest way to catch anything wrong in the migration.
+2. Populate `vendor/searxng` and `vendor/crawl4ai` (see their READMEs),
+   build the full compose stack, and run one real `/v1/research` call
+   end-to-end.
+3. Decide on rate limiting approach (or explicitly punt further) before
+   exposing this beyond trusted callers.
+4. When ready to revisit embeddings/semantic search: pick a provider (API
+   key based, per the user's decision this session), add
+   `EMBEDDING_PROVIDER`/`EMBEDDING_DIM` back to `Settings`/SPEC.md, add a
+   `document_chunks` table + migration, implement chunking + embedding in
+   the worker pipeline, and implement `RetrievalMode.SEMANTIC` in
+   `research_service.py` (currently raises `SemanticSearchNotImplementedError`).
 
 ## Risks / Unknowns
 
-- **Embedding provider not chosen.** `EMBEDDING_PROVIDER` / `EMBEDDING_DIM`
-  in SPEC §9 are placeholders. Needs a decision (local model vs hosted API)
-  before item 3 above, since `document_chunks.embedding` dimension is fixed
-  at migration time and is not free to change later.
 - **SearXNG hosting** — assumed self-hosted per ARCHITECTURE §3; confirm no
   public-instance rate-limit dependency is intended.
-- **Auth model** — SPEC §8 assumes a single-tenant `api_keys` table with
-  per-key rate limits. Confirm this is sufficient (vs. full multi-tenant
-  isolation) before implementing item 11.
-- **Crawl4AI deployment mode** — as a library import inside the worker
-  process, or as a separate service reached over HTTP (as ARCHITECTURE §4
-  diagrams it)? Confirm before item 8; changes the worker's dependency
-  footprint.
+- **Auth model** — single-tenant `api_keys` table with per-key rate limits
+  (unenforced, see Known Gaps). Confirm this is sufficient before adding
+  real multi-tenant isolation.

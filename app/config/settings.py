@@ -1,0 +1,48 @@
+from enum import StrEnum
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class SearchProviderName(StrEnum):
+    SEARXNG = "searxng"
+
+
+class CrawlProviderName(StrEnum):
+    CRAWL4AI = "crawl4ai"
+
+
+class ExecutionMode(StrEnum):
+    BLOCKING = "blocking"
+    BACKGROUND = "background"
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    database_url: str
+
+    search_provider: SearchProviderName = SearchProviderName.SEARXNG
+    searxng_url: str
+
+    crawl_provider: CrawlProviderName = CrawlProviderName.CRAWL4AI
+    crawl4ai_url: str
+
+    research_execution_mode_default: ExecutionMode = ExecutionMode.BLOCKING
+
+    crawl_max_response_bytes: int = 5_000_000
+    crawl_fetch_timeout_seconds: int = 20
+    crawl_per_domain_concurrency: int = 2
+
+    job_max_attempts: int = 3
+    worker_poll_interval_seconds: float = 1
+
+    ttl_docs_days: int = 30
+    ttl_github_days: int = 7
+    ttl_blog_days: int = 7
+    ttl_news_hours: int = 6
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

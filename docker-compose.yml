@@ -1,0 +1,62 @@
+services:
+  postgres:
+    # Official image, not vendored — ARCHITECTURE.md §13.1.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: deep_research
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Vendored, not pulled prebuilt — ARCHITECTURE.md §13.2. Requires the
+  # vendor/searxng submodule to be populated first (see its README).
+  searxng:
+    build:
+      context: ./vendor/searxng
+    ports:
+      - "8080:8080"
+
+  # Vendored, not pulled prebuilt — ARCHITECTURE.md §13.2. Requires the
+  # vendor/crawl4ai submodule to be populated first (see its README).
+  crawl4ai:
+    build:
+      context: ./vendor/crawl4ai
+    ports:
+      - "11235:11235"
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_research
+      SEARXNG_URL: http://searxng:8080
+      CRAWL4AI_URL: http://crawl4ai:11235
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker_main"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_research
+      SEARXNG_URL: http://searxng:8080
+      CRAWL4AI_URL: http://crawl4ai:11235
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Stateless — scale with: docker compose up --scale worker=3
+
+volumes:
+  postgres_data:

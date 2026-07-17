@@ -409,13 +409,17 @@ repo controls directly:
 
 ```
 vendor/
-├── searxng/      # git submodule, pinned to a specific upstream commit
-└── crawl4ai/     # git submodule, pinned to a specific upstream commit
-
-docker/
-├── searxng/Dockerfile     # FROM ... builds the image from vendor/searxng
-└── crawl4ai/Dockerfile    # FROM ... builds the image from vendor/crawl4ai
+├── searxng/      # git submodule, pinned to a specific upstream commit — has its own Dockerfile
+└── crawl4ai/     # git submodule, pinned to a specific upstream commit — has its own Dockerfile
 ```
+
+`docker-compose.yml` points each service's build context directly at its
+vendored directory (`build: ./vendor/searxng`), using **that project's own
+Dockerfile** as the build definition — that Dockerfile is itself part of
+the vendored source, so a local patch that touches the build (a baked-in
+config file, an extra dependency) is just another commit on the
+`local-patches` branch, same as any other change. There is no separate
+wrapper Dockerfile in this repo to keep in sync with upstream's.
 
 Each submodule is checked out on a local branch (e.g. `local-patches`)
 based on a specific pinned upstream commit/tag. Any modification this
@@ -460,12 +464,10 @@ deep-research-backend/
 ├── tests/
 │   └── contract/                # per-provider contract tests (§10.3)
 ├── vendor/                       # git submodules, pinned commit + local patch branch (§13.2)
-│   ├── searxng/
-│   └── crawl4ai/
-├── docker/                       # Dockerfiles building searxng/crawl4ai from vendor/ (§13.2)
-│   ├── searxng/Dockerfile
-│   └── crawl4ai/Dockerfile
+│   ├── searxng/                  # has its own Dockerfile — docker-compose builds this context directly
+│   └── crawl4ai/                 # has its own Dockerfile — docker-compose builds this context directly
 ├── docs/                          # this directory
+├── Dockerfile                     # builds the api/worker image (this app's own code)
 ├── docker-compose.yml
 ├── AGENT.md
 └── main.py
