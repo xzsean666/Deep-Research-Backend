@@ -33,6 +33,26 @@ invalid key returns:
 {"error": {"code": "UNAUTHORIZED", "message": "invalid API key", "request_id": "..."}}
 ```
 
+**Default test key** (the `root@ssr` deployment, label `e2e-test-key`,
+seeded during E2E testing — see `docs/DEPLOYMENT.md`):
+
+```
+sE4CkRSdz1tVYXyh2F_4lISmh4ts8Fk8Cb_ohuaq7ZE
+```
+
+⚠️ This is a real, live credential for that deployment, committed here
+because it's a test-only key on a private server with no git remote yet.
+If this repo ever gets a remote and gets pushed anywhere, rotate this key
+first (delete the row in `api_keys` and issue a new one — see
+`docs/DEPLOYMENT.md`) rather than let a real credential sit in git
+history.
+
+Every `$API_KEY` in the examples below defaults to this value against
+that deployment:
+```bash
+export API_KEY=sE4CkRSdz1tVYXyh2F_4lISmh4ts8Fk8Cb_ohuaq7ZE
+```
+
 ## The one call you actually need: keyword search
 
 ```bash
