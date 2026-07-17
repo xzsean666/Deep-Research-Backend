@@ -23,6 +23,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

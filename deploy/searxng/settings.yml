@@ -1,0 +1,19 @@
+# Mounted into the searxng container at /etc/searxng/settings.yml
+# (docker-compose.yml). Extends SearXNG's own defaults rather than
+# replacing them — see vendor/searxng/searx/settings.yml for everything
+# this inherits.
+#
+# server.secret_key is intentionally left as the placeholder: it's
+# overwritten at container start by the SEARXNG_SECRET env var
+# (docker-compose.yml), so the real secret is never committed here.
+use_default_settings: true
+
+server:
+  secret_key: "ultrasecretkey"  # overwritten by ${SEARXNG_SECRET} at runtime
+
+search:
+  # json is required — app/services/search/searxng_provider.py (this repo)
+  # calls SearXNG with ?format=json, which the upstream default disables.
+  formats:
+    - html
+    - json

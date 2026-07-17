@@ -15,19 +15,15 @@ stack, no managed/external dependencies:
 | `api` | `Dockerfile` (this repo) | FastAPI app, `main.py` entrypoint |
 | `worker` | `Dockerfile` (this repo), same image as `api` | job-claim loop, scale with `--scale worker=N` |
 | `postgres` | official `pgvector/pgvector:pg16` image, pinned tag | primary datastore; ships with the `vector` extension built in — see [ARCHITECTURE.md §13.1](ARCHITECTURE.md#131-database-image--official-unmodified) for why this one stays an official image |
-| `searxng` | `vendor/searxng`'s own Dockerfile (submodule, pinned commit) | self-hosted metasearch — vendored, not pulled prebuilt, so it can be patched (§13.2) |
-| `crawl4ai` | `vendor/crawl4ai`'s own Dockerfile (submodule, pinned commit) | crawl/extraction service — vendored for the same reason |
+| `searxng` | `docker/searxng/Dockerfile` (merged multi-stage build, `vendor/searxng` submodule) | self-hosted metasearch — vendored, not pulled prebuilt, so it can be patched (§13.2) |
+| `crawl4ai` | `vendor/crawl4ai`'s own root Dockerfile (submodule, pinned commit) | crawl/extraction service — vendored for the same reason |
 
 Postgres is pinned by image tag. SearXNG and Crawl4AI are pinned by the
-submodule commit their own Dockerfile builds from. Neither moves without a
+submodule commit their build is generated from. Neither moves without a
 deliberate, reviewed change — see
 [ARCHITECTURE.md §13.2](ARCHITECTURE.md#132-search--crawl-images--built-from-vendored-source-not-pulled-prebuilt).
 
-**The `vendor/searxng` and `vendor/crawl4ai` submodules are not yet
-populated in this repo** — see the README in each directory for the exact
-commands to add them. Until then, `docker compose up` will fail on the
-`searxng`/`crawl4ai` services specifically; `api`, `worker`, and `postgres`
-work standalone. Once cloned elsewhere with submodules populated:
+Cloning this repo needs its submodules too:
 
 ```bash
 git clone --recurse-submodules <repo-url>

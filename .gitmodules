@@ -1,0 +1,6 @@
+[submodule "vendor/searxng"]
+	path = vendor/searxng
+	url = https://github.com/searxng/searxng
+[submodule "vendor/crawl4ai"]
+	path = vendor/crawl4ai
+	url = https://github.com/unclecode/crawl4ai

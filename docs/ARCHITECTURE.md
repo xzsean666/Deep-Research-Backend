@@ -409,17 +409,31 @@ repo controls directly:
 
 ```
 vendor/
-├── searxng/      # git submodule, pinned to a specific upstream commit — has its own Dockerfile
-└── crawl4ai/     # git submodule, pinned to a specific upstream commit — has its own Dockerfile
+├── searxng/      # git submodule, pinned to a specific upstream commit
+└── crawl4ai/     # git submodule, pinned to a specific upstream commit — has its own root Dockerfile
 ```
 
-`docker-compose.yml` points each service's build context directly at its
-vendored directory (`build: ./vendor/searxng`), using **that project's own
-Dockerfile** as the build definition — that Dockerfile is itself part of
-the vendored source, so a local patch that touches the build (a baked-in
-config file, an extra dependency) is just another commit on the
-`local-patches` branch, same as any other change. There is no separate
-wrapper Dockerfile in this repo to keep in sync with upstream's.
+`docker-compose.yml` points the `crawl4ai` service's build context directly
+at `vendor/crawl4ai`, using **that project's own Dockerfile** — it's a
+single self-contained build, part of the vendored source, so a local patch
+that touches it is just another commit on the `local-patches` branch.
+
+**SearXNG needed one exception**, discovered when actually building it:
+upstream splits its build across `container/builder.dockerfile` and
+`container/dist.dockerfile`, where the second stage's `FROM
+localhost/searxng/searxng:builder` expects the first to already exist as a
+separately pre-tagged local image — something `docker compose build`
+cannot express on its own. `docker/searxng/Dockerfile` merges both stages
+into one multi-stage build (named stages instead of a pre-tagged image);
+its header comment explains this and points at BUILD.md §10.2 for what to
+re-check when the pinned commit is bumped. This is the one wrapper
+Dockerfile in the repo — everything else builds straight from its
+vendored/official source.
+
+SearXNG also needs `deploy/searxng/settings.yml` (mounted read-only into
+the container) to enable JSON output, which upstream disables by default —
+`SearchProvider`'s SearXNG adapter depends on `?format=json`. See that
+file and the `searxng` service in `docker-compose.yml`.
 
 Each submodule is checked out on a local branch (e.g. `local-patches`)
 based on a specific pinned upstream commit/tag. Any modification this
@@ -464,8 +478,10 @@ deep-research-backend/
 ├── tests/
 │   └── contract/                # per-provider contract tests (§10.3)
 ├── vendor/                       # git submodules, pinned commit + local patch branch (§13.2)
-│   ├── searxng/                  # has its own Dockerfile — docker-compose builds this context directly
-│   └── crawl4ai/                 # has its own Dockerfile — docker-compose builds this context directly
+│   ├── searxng/
+│   └── crawl4ai/                 # has its own root Dockerfile — docker-compose builds this context directly
+├── docker/searxng/Dockerfile      # merges searxng's split builder/dist build (§13.2) — the one wrapper Dockerfile
+├── deploy/searxng/settings.yml    # mounted config enabling JSON output (§13.2)
 ├── docs/                          # this directory
 ├── Dockerfile                     # builds the api/worker image (this app's own code)
 ├── docker-compose.yml
