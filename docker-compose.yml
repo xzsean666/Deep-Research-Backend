@@ -22,6 +22,7 @@ services:
     # Official image, not vendored — ARCHITECTURE.md §13.1.
     image: pgvector/pgvector:pg16
     container_name: ${PROJECT_PREFIX:-deep-research-backend}-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: deep_research
       POSTGRES_USER: postgres
@@ -46,6 +47,7 @@ services:
       context: ./vendor/searxng
       dockerfile: ../../docker/searxng/Dockerfile
     container_name: ${PROJECT_PREFIX:-deep-research-backend}-searxng
+    restart: unless-stopped
     environment:
       # SEARXNG_SECRET must be set in .env for a real deployment — see
       # .env.example. Overrides the settings.yml placeholder at runtime.
@@ -69,6 +71,7 @@ services:
     build:
       context: ./vendor/crawl4ai
     container_name: ${PROJECT_PREFIX:-deep-research-backend}-crawl4ai
+    restart: unless-stopped
     # Chromium needs real shared memory; upstream's own compose file uses
     # the same value. Memory limits mirror upstream's defaults too — its
     # healthcheck fails startup if it sees less than 2GB available.
@@ -89,6 +92,7 @@ services:
   api:
     build: .
     container_name: ${PROJECT_PREFIX:-deep-research-backend}-api
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_research
@@ -110,6 +114,7 @@ services:
     # this service is scaled (see below) — it still gets the same
     # ${PROJECT_PREFIX}-worker-N prefix automatically from `name:` above.
     command: ["python", "-m", "app.worker_main"]
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_research

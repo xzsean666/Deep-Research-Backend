@@ -72,7 +72,11 @@ async def run_worker_loop(stop_event: asyncio.Event | None = None) -> None:
     sessionmaker = get_sessionmaker()
 
     while stop_event is None or not stop_event.is_set():
-        async with sessionmaker() as session:
-            claimed = await process_one_job(session, crawl_provider, settings)
+        try:
+            async with sessionmaker() as session:
+                claimed = await process_one_job(session, crawl_provider, settings)
+        except Exception:  # noqa: BLE001 - a bad iteration (e.g. a DB blip) must not kill the worker
+            logger.exception("worker iteration failed, will retry after the poll interval")
+            claimed = False
         if not claimed:
             await asyncio.sleep(settings.worker_poll_interval_seconds)
