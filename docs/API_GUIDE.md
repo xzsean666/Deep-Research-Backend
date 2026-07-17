@@ -40,9 +40,9 @@ it's meant for a deployment firewalled to a VPN/internal network, not one
 reachable from the open internet.
 
 **The `root@ssr` deployment has `REQUIRE_API_KEY=false`** — no
-`Authorization` header is needed there at all; every `$API_KEY` in the
-examples below can be omitted against that deployment. It's kept
-documented here in case auth gets re-enabled later:
+`Authorization` header is needed there at all, which is why the examples
+below omit it. A previously-seeded key still exists and would work if
+auth gets re-enabled there later:
 
 ```
 sE4CkRSdz1tVYXyh2F_4lISmh4ts8Fk8Cb_ohuaq7ZE
@@ -54,9 +54,13 @@ pushed anywhere.)
 
 ## The one call you actually need: keyword search
 
+The examples below omit the `Authorization` header, matching the
+`root@ssr` deployment (`REQUIRE_API_KEY=false`). If you're calling a
+deployment with the default `REQUIRE_API_KEY=true`, add
+`-H "Authorization: Bearer $API_KEY"` to every request.
+
 ```bash
 curl -X POST http://localhost:8000/v1/research \
-  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query": "python asyncio tutorial", "limit": 3}'
 ```
@@ -126,7 +130,7 @@ redundant crawl — polling is safe and cheap.
 
 ```bash
 curl -X POST http://localhost:8000/v1/research \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" \
   -d '{"query": "rust ownership borrowing", "limit": 2, "execution_mode": "background"}'
 # -> {"status": "partial", "pending": 2, "documents": [{"status": "pending", "job_id": "...", ...}, ...]}
 ```
@@ -140,7 +144,7 @@ raising timeouts everywhere — see `docs/BUILD.md §9`.
 **Direct crawl of a known URL** (skips search):
 ```bash
 curl -X POST http://localhost:8000/v1/crawl \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/some-page"}'
 # -> 200 {"status": "cached", ...} if already have it, or 202 {"status": "queued", "job_id": "..."}
 ```
