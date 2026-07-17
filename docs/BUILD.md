@@ -52,8 +52,12 @@ docker compose exec api alembic upgrade head
 ```
 
 `postgres`, `searxng`, and `crawl4ai` do not publish ports to the host —
-only `api` (port 8000) is reachable from outside the compose network,
-since nothing else needs to be. To inspect one of the internal services
+only `api` is reachable from outside the compose network, since nothing
+else needs to be. It publishes on host port `8000` by default; set
+`API_PORT` in `.env` to change it (e.g. to avoid colliding with other
+projects' ports on a shared host) — the container's own internal port
+always stays `8000`, only the host-side mapping changes. To inspect one
+of the internal services
 directly (e.g. `psql` during development), run it through the container
 rather than adding a host port mapping to the shared compose file:
 
@@ -97,6 +101,9 @@ SearXNG/Crawl4AI — never mock the database itself; a passing mocked test
 must not be read as proof the pipeline works end to end.
 
 ## 6. Calling the API
+
+Replace `8000` below with whatever `API_PORT` is set to in `.env` if
+you've changed it from the default.
 
 ```bash
 curl -X POST http://localhost:8000/v1/research \

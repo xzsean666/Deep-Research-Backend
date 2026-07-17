@@ -106,7 +106,11 @@ services:
       SEARXNG_URL: http://searxng:8080
       CRAWL4AI_URL: http://crawl4ai:11235
     ports:
-      - "8000:8000"
+      # Host-side port only — the app inside the container always listens
+      # on 8000 (Dockerfile CMD); only which host port reaches it changes.
+      # Override via API_PORT in .env, e.g. to avoid colliding with other
+      # projects on a shared host.
+      - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
