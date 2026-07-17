@@ -75,3 +75,26 @@ def test_research_endpoint_end_to_end_with_overrides(monkeypatch):
         assert body["documents"][0]["status"] == "pending"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_semantic_mode_returns_clean_501_not_a_raw_500():
+    """Caught in production: mode='semantic' crashed with an unhandled
+    500 instead of a structured error, because SemanticSearchNotImplementedError
+    had no registered exception handler. See app/api/errors.py.
+    """
+    app.dependency_overrides[require_api_key] = lambda: ApiKey(
+        key_hash="x", label="test", rate_limit_per_minute=60
+    )
+    app.dependency_overrides[get_research_sessionmaker] = lambda: _fake_sessionmaker
+    app.dependency_overrides[get_search_provider_dep] = lambda: _FakeSearchProvider()
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/research",
+            json={"query": "hello", "mode": RetrievalMode.SEMANTIC.value},
+        )
+        assert response.status_code == 501
+        assert response.json()["error"]["code"] == "NOT_IMPLEMENTED"
+    finally:
+        app.dependency_overrides.clear()

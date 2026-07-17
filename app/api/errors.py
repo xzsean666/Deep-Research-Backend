@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 
 from app.schemas.error import ErrorDetail, ErrorResponse
 from app.services.crawl.errors import CrawlBlockedError
+from app.services.research import SemanticSearchNotImplementedError
 
 
 class ApiError(Exception):
@@ -57,7 +58,22 @@ async def crawl_blocked_handler(request: Request, exc: CrawlBlockedError) -> JSO
     )
 
 
+async def not_implemented_handler(
+    request: Request, exc: SemanticSearchNotImplementedError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=501,
+        content=_envelope(
+            "NOT_IMPLEMENTED",
+            "mode='semantic' requires an embedding provider, not yet implemented"
+            " (see docs/nextsession.md)",
+            _request_id(request),
+        ),
+    )
+
+
 EXCEPTION_HANDLERS = {
     ApiError: api_error_handler,
     CrawlBlockedError: crawl_blocked_handler,
+    SemanticSearchNotImplementedError: not_implemented_handler,
 }

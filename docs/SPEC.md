@@ -34,7 +34,8 @@ Every error response uses the same envelope:
 Standard `code` values: `INVALID_REQUEST`, `NOT_FOUND`, `UNAUTHORIZED`,
 `RATE_LIMITED`, `CRAWL_BLOCKED` (URL rejected by the SSRF guard, §7 of
 ARCHITECTURE.md), `UPSTREAM_UNAVAILABLE` (SearXNG/Crawl4AI down),
-`INTERNAL_ERROR`.
+`NOT_IMPLEMENTED` (`mode: "semantic"` — deferred post-MVP, see
+[nextsession.md](nextsession.md)), `INTERNAL_ERROR`.
 
 ## 3. `POST /v1/research`
 
