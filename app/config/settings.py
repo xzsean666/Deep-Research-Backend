@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # Sent as `Authorization: Bearer <token>` by Crawl4AICrawlProvider.
     crawl4ai_api_token: str
 
+    # Secure by default. Set to false only for a deployment that's already
+    # network-isolated (firewalled to trusted callers) — disabling this
+    # does not add any other access control. SPEC.md §1.
+    require_api_key: bool = True
+
     research_execution_mode_default: ExecutionMode = ExecutionMode.BLOCKING
 
     crawl_max_response_bytes: int = 5_000_000

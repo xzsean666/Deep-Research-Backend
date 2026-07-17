@@ -14,7 +14,9 @@
 - All IDs: UUID v4 strings.
 - All endpoints are under `/v1`.
 - Auth: `Authorization: Bearer <api_key>` header, required on every route
-  except `/health` and `/ready`.
+  except `/health` and `/ready` — unless `REQUIRE_API_KEY=false` (§9),
+  which disables this entirely for a deployment that's already
+  network-isolated to trusted callers.
 - Content type: `application/json` for all request/response bodies.
 
 ## 2. Error Format
@@ -269,6 +271,7 @@ from environment variables. No config is read anywhere else in the codebase.
 | Env var | Default | Notes |
 |---|---|---|
 | `DATABASE_URL` | required | postgres async DSN |
+| `REQUIRE_API_KEY` | `true` | set `false` only for a deployment already network-isolated to trusted callers — disables all API key auth, adds no other access control in its place (§1) |
 | `SEARCH_PROVIDER` | `"searxng"` | selects the `SearchProvider` adapter (ARCHITECTURE §10) — only value implemented initially, but the point is this is a config flip, not a code change, to add another |
 | `SEARXNG_URL` | required | base URL of the vendored SearXNG service (ARCHITECTURE §13.2) |
 | `CRAWL_PROVIDER` | `"crawl4ai"` | selects the `CrawlProvider` adapter (ARCHITECTURE §10) |

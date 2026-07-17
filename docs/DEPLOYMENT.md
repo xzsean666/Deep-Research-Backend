@@ -57,6 +57,11 @@ individual container crash without manual intervention.
    `10010` (confirmed free via `ss -tln` before use) — `API_PORT=10010` in
    `.env`. `docker-compose.yml`'s `api.ports` reads `${API_PORT:-8000}:8000`,
    container-internal port unchanged.
+8. API key auth later disabled on this deployment by request —
+   `REQUIRE_API_KEY=false` in `.env` (SPEC.md §9). The auth rejection row
+   in the E2E results table below was true *at the time it was tested*,
+   before this change; the seeded `e2e-test-key` still exists and works if
+   `REQUIRE_API_KEY` is ever flipped back to `true`.
 
 ## Bugs found and fixed by deploying for real
 

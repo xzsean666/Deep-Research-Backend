@@ -38,8 +38,18 @@ def hash_api_key(raw_key: str) -> str:
 
 
 async def require_api_key(
-    session: DbSessionDep, authorization: str | None = Header(default=None)
-) -> ApiKey:
+    settings: SettingsDep, session: DbSessionDep, authorization: str | None = Header(default=None)
+) -> ApiKey | None:
+    """Auth gate for every route except /health and /ready.
+
+    Returns None, skipping the check entirely, when REQUIRE_API_KEY=false
+    (Settings.require_api_key) — for a deployment that's already
+    network-isolated to trusted callers. No router reads this dependency's
+    return value; it exists purely to raise on failure.
+    """
+    if not settings.require_api_key:
+        return None
+
     if not authorization or not authorization.startswith("Bearer "):
         raise UnauthorizedError("missing or malformed Authorization header")
 
