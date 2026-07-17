@@ -42,6 +42,16 @@ docker compose up -d
 docker compose exec api alembic upgrade head
 ```
 
+`postgres`, `searxng`, and `crawl4ai` do not publish ports to the host —
+only `api` (port 8000) is reachable from outside the compose network,
+since nothing else needs to be. To inspect one of the internal services
+directly (e.g. `psql` during development), run it through the container
+rather than adding a host port mapping to the shared compose file:
+
+```bash
+docker compose exec postgres psql -U postgres -d deep_research
+```
+
 ## 3. Environment Variables
 
 Copy `.env.example` to `.env` and fill in values. Full reference: see
