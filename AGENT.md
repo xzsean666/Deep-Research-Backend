@@ -17,6 +17,7 @@ Optimize for that, not for human aesthetic preference.
 |---|---|
 | Why the system is shaped this way, module boundaries, data flow | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Exact API contracts, data models, config, error format | [docs/SPEC.md](docs/SPEC.md) |
+| How a caller actually integrates — auth, tested examples, error handling | [docs/API_GUIDE.md](docs/API_GUIDE.md) |
 | How to run, migrate, test, deploy | [docs/BUILD.md](docs/BUILD.md) |
 | Official docs URLs for every external dependency | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | What's done, what's next, open risks | [docs/nextsession.md](docs/nextsession.md) |
