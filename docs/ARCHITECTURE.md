@@ -91,6 +91,14 @@ through PostgreSQL row locks. There is no worker-to-worker communication.
 → enqueue pipeline; they differ only in what happens after a job is
 enqueued.
 
+"Enqueue" means reuse-or-create, not always-create: before making a new
+job, the pipeline checks for one already `pending`/`running` for that URL
+(`crawl_job_repository.get_active_by_url`) and reuses it if found. Without
+this, background mode's documented polling pattern (§5.2 — call
+`/v1/research` again to check on a `pending` document) would spawn a fresh
+duplicate crawl job on every poll instead of waiting on the one already in
+flight; found by exactly that pattern during initial deployment testing.
+
 ```mermaid
 flowchart TD
     A[Keyword] --> B[SearXNG search]

@@ -46,10 +46,14 @@ def test_research_endpoint_end_to_end_with_overrides(monkeypatch):
     async def fake_get_by_normalized_url(session, normalized_url):
         return None  # forces the "missing document" path
 
+    async def fake_get_active_by_url(session, url):
+        return None  # no in-flight job yet
+
     async def fake_create(session, *, type_, url, max_attempts):
         return type("FakeJob", (), {"id": uuid.uuid4()})()
 
     monkeypatch.setattr(document_repository, "get_by_normalized_url", fake_get_by_normalized_url)
+    monkeypatch.setattr(crawl_job_repository, "get_active_by_url", fake_get_active_by_url)
     monkeypatch.setattr(crawl_job_repository, "create", fake_create)
 
     app.dependency_overrides[require_api_key] = lambda: ApiKey(

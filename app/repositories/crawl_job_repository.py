@@ -28,6 +28,26 @@ async def get_by_id(session: AsyncSession, job_id: uuid.UUID) -> CrawlJob | None
     return await session.get(CrawlJob, job_id)
 
 
+async def get_active_by_url(session: AsyncSession, url: str) -> CrawlJob | None:
+    """An in-flight (pending/running) job already targeting this URL, if any.
+
+    Callers should reuse this instead of creating a new job — otherwise
+    polling /v1/research for a URL that hasn't resolved yet (the documented
+    background-mode pattern, ARCHITECTURE.md §5.2) creates a fresh duplicate
+    job on every call instead of waiting on the one already in flight.
+    dead_letter/completed jobs are excluded on purpose: a URL whose only
+    job already failed permanently should get a fresh set of attempts.
+    """
+    stmt = (
+        select(CrawlJob)
+        .where(CrawlJob.url == url, CrawlJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]))
+        .order_by(CrawlJob.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def claim_next(session: AsyncSession) -> CrawlJob | None:
     """Atomically claim one due job for this worker. See ARCHITECTURE.md §9."""
     stmt = (

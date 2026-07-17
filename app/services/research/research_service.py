@@ -124,13 +124,19 @@ async def _research_online(
                 )
                 continue
 
-            job_type = JobType.REFRESH if existing is not None else JobType.CRAWL
-            job = await crawl_job_repository.create(
-                session,
-                type_=job_type,
-                url=search_result.url,
-                max_attempts=settings.job_max_attempts,
-            )
+            # Reuse an in-flight job for this URL rather than creating a
+            # duplicate — otherwise polling /v1/research for a URL that
+            # hasn't resolved yet (the documented background-mode pattern,
+            # ARCHITECTURE.md §5.2) spawns a fresh job on every call.
+            job = await crawl_job_repository.get_active_by_url(session, search_result.url)
+            if job is None:
+                job_type = JobType.REFRESH if existing is not None else JobType.CRAWL
+                job = await crawl_job_repository.create(
+                    session,
+                    type_=job_type,
+                    url=search_result.url,
+                    max_attempts=settings.job_max_attempts,
+                )
 
             if existing is not None:
                 # Stale, not missing — ARCHITECTURE.md §6.2: never block on a

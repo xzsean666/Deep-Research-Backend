@@ -32,6 +32,10 @@ class FakeSearchProvider:
         return self._results[:limit]
 
 
+async def _no_active_job(session, url):
+    return None
+
+
 def make_document(**overrides):
     now = datetime.now(UTC)
     defaults = {
@@ -104,6 +108,7 @@ async def test_online_missing_document_blocking_waits_for_job_completion(monkeyp
         return crawled_doc
 
     monkeypatch.setattr(document_repository, "get_by_normalized_url", fake_get_by_normalized_url)
+    monkeypatch.setattr(crawl_job_repository, "get_active_by_url", _no_active_job)
     monkeypatch.setattr(crawl_job_repository, "create", fake_create)
     monkeypatch.setattr(crawl_job_repository, "get_by_id", fake_get_by_id_job)
     monkeypatch.setattr(document_repository, "get_by_id", fake_get_by_id_doc)
@@ -147,6 +152,7 @@ async def test_online_missing_document_blocking_reports_failure_on_dead_letter(
         )()
 
     monkeypatch.setattr(document_repository, "get_by_normalized_url", fake_get_by_normalized_url)
+    monkeypatch.setattr(crawl_job_repository, "get_active_by_url", _no_active_job)
     monkeypatch.setattr(crawl_job_repository, "create", fake_create)
     monkeypatch.setattr(crawl_job_repository, "get_by_id", fake_get_by_id_job)
 
@@ -185,6 +191,7 @@ async def test_online_missing_document_background_returns_pending_immediately(
         raise AssertionError("background mode must never poll a job")
 
     monkeypatch.setattr(document_repository, "get_by_normalized_url", fake_get_by_normalized_url)
+    monkeypatch.setattr(crawl_job_repository, "get_active_by_url", _no_active_job)
     monkeypatch.setattr(crawl_job_repository, "create", fake_create)
     monkeypatch.setattr(crawl_job_repository, "get_by_id", fail_if_called)
 
@@ -220,6 +227,7 @@ async def test_refresh_flag_forces_recrawl_of_a_fresh_cached_document(monkeypatc
         return type("FakeJob", (), {"id": job_id})()
 
     monkeypatch.setattr(document_repository, "get_by_normalized_url", fake_get_by_normalized_url)
+    monkeypatch.setattr(crawl_job_repository, "get_active_by_url", _no_active_job)
     monkeypatch.setattr(crawl_job_repository, "create", fake_create)
 
     search_provider = FakeSearchProvider(
@@ -238,6 +246,45 @@ async def test_refresh_flag_forces_recrawl_of_a_fresh_cached_document(monkeypatc
     )
 
     assert response.documents[0].status == ResearchDocumentStatus.PENDING
+
+
+async def test_polling_reuses_an_in_flight_job_instead_of_duplicating_it(monkeypatch, settings):
+    """Caught in production: calling /v1/research again for a URL whose
+    crawl hadn't finished yet created a second crawl_jobs row for the same
+    URL, instead of reusing the one already running — exactly the polling
+    pattern ARCHITECTURE.md §5.2 documents for background mode.
+    """
+    existing_job_id = uuid.uuid4()
+
+    async def fake_get_by_normalized_url(session, normalized_url):
+        return None
+
+    async def fake_get_active_by_url(session, url):
+        return type("FakeJob", (), {"id": existing_job_id})()
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("must reuse the in-flight job, not create a duplicate")
+
+    monkeypatch.setattr(document_repository, "get_by_normalized_url", fake_get_by_normalized_url)
+    monkeypatch.setattr(crawl_job_repository, "get_active_by_url", fake_get_active_by_url)
+    monkeypatch.setattr(crawl_job_repository, "create", fail_if_called)
+
+    search_provider = FakeSearchProvider(
+        [SearchResult(url="https://slow.example.com/", title="t", snippet="s", rank=1)]
+    )
+
+    response = await research(
+        fake_sessionmaker,
+        search_provider,
+        settings,
+        query="q",
+        limit=5,
+        refresh=False,
+        execution_mode=ExecutionMode.BACKGROUND,
+        mode=RetrievalMode.ONLINE,
+    )
+
+    assert response.documents[0].job_id == existing_job_id
 
 
 async def test_semantic_mode_is_not_implemented(settings):
