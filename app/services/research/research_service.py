@@ -51,6 +51,7 @@ def _cached_or_crawled_document(
         search_rank=search_result.rank if search_result else None,
         fetched_at=document.fetched_at,
         expires_at=document.expires_at,
+        published_at=document.published_at,
     )
 
 
@@ -67,9 +68,15 @@ def _pending_document(search_result: SearchResult, normalized_url: str, job_id) 
 def _failed_document(
     search_result: SearchResult, normalized_url: str, error: str | None
 ) -> ResearchDocument:
+    # The crawl failed, but the search step already had a title/snippet for
+    # this URL — falling back to it beats returning nothing. status stays
+    # FAILED and error stays populated, so callers can still tell this is
+    # degraded (search-snippet-only) content rather than a full crawl.
     return ResearchDocument(
         url=search_result.url,
         normalized_url=normalized_url,
+        title=search_result.title,
+        summary=search_result.snippet,
         status=ResearchDocumentStatus.FAILED,
         search_rank=search_result.rank,
         error=error,

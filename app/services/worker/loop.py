@@ -57,6 +57,7 @@ async def process_one_job(
         doc_metadata=result.metadata,
         fetched_at=fetched_at,
         expires_at=compute_expires_at(source_type, fetched_at, settings),
+        published_at=result.published_at,
     )
     await crawl_job_repository.mark_completed(session, job.id, document.id)
     return True

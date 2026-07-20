@@ -272,8 +272,19 @@ from environment variables. No config is read anywhere else in the codebase.
 |---|---|---|
 | `DATABASE_URL` | required | postgres async DSN |
 | `REQUIRE_API_KEY` | `true` | set `false` only for a deployment already network-isolated to trusted callers — disables all API key auth, adds no other access control in its place (§1) |
-| `SEARCH_PROVIDER` | `"searxng"` | selects the `SearchProvider` adapter (ARCHITECTURE §10) — only value implemented initially, but the point is this is a config flip, not a code change, to add another |
+| `SEARCH_PROVIDER` | `"searxng"` | selects the `SearchProvider` adapter (ARCHITECTURE §10) — a config flip, not a code change. `"composite"` fans out to SearXNG plus any enabled extra sources below, merged by weighted round-robin with a hard per-source cap (`app/services/search/composite_provider.py`) — never a blended cross-source score, so a noisy low-signal source can't drown out the primary source's results |
 | `SEARXNG_URL` | required | base URL of the vendored SearXNG service (ARCHITECTURE §13.2) |
+| `SEARCH_SEARXNG_WEIGHT` | `1.0` | only read under `SEARCH_PROVIDER=composite` — SearXNG's round-robin weight, uncapped |
+| `SEARCH_COMPOSITE_TIMEOUT_SECONDS` | `15.0` | only read under `SEARCH_PROVIDER=composite` — per-source timeout; a source that exceeds it contributes nothing rather than blocking the request |
+| `SEARCH_REDDIT_ENABLED` | `false` | only read under `SEARCH_PROVIDER=composite` — adds Reddit's public, unauthenticated `search.json` endpoint as an extra source (no API key needed) |
+| `SEARCH_REDDIT_WEIGHT` / `SEARCH_REDDIT_MAX_RESULTS` | `0.4` / `2` | Reddit's round-robin weight and hard cap on its share of the final merged results |
+| `SEARCH_REDDIT_BASE_URL` / `SEARCH_REDDIT_USER_AGENT` | `https://www.reddit.com` / `DeepResearchBackend/1.0` | overridable in case Reddit starts blocking the default UA string. Note: confirmed live that Reddit now 403s most anonymous JSON requests platform-wide — this source degrades to empty results until OAuth is wired, not currently high-value |
+| `SEARCH_GITHUB_ENABLED` | `false` | only read under `SEARCH_PROVIDER=composite` — adds GitHub's official repository search API (reliable, structured, not scraping) as an extra source |
+| `SEARCH_GITHUB_WEIGHT` / `SEARCH_GITHUB_MAX_RESULTS` | `0.6` / `3` | GitHub's round-robin weight and hard cap on its share of the final merged results |
+| `SEARCH_GITHUB_BASE_URL` / `SEARCH_GITHUB_TOKEN` | `https://api.github.com` / *(empty, unauthenticated)* | token is optional — unauthenticated search works at 10 req/min GitHub-enforced; a token raises that to 30 req/min |
+| `SEARCH_TRUTH_SOCIAL_ENABLED` | `false` | only read under `SEARCH_PROVIDER=composite` — Trump's Truth Social feed specifically, relevant only for markets about his statements/policy. Deliberately low weight + small cap by default — this is the exact source that drowned out relevant results on unrelated queries in a prior system with naive cross-source scoring |
+| `SEARCH_TRUTH_SOCIAL_WEIGHT` / `SEARCH_TRUTH_SOCIAL_MAX_RESULTS` | `0.2` / `2` | raise only for a deployment/use case that's genuinely mostly Trump-related markets |
+| `SEARCH_TRUTH_SOCIAL_BASE_URL` | `https://truthsocial.com` | |
 | `CRAWL_PROVIDER` | `"crawl4ai"` | selects the `CrawlProvider` adapter (ARCHITECTURE §10) |
 | `CRAWL4AI_URL` | required | base URL of the vendored Crawl4AI service (ARCHITECTURE §13.2) |
 | `CRAWL4AI_API_TOKEN` | required | Crawl4AI refuses to bind beyond loopback without this, and enforces it as a Bearer auth header on every request — discovered deploying it for real, not part of the original design. See `vendor/crawl4ai/deploy/docker/entrypoint.sh`. |

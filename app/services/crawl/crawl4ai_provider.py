@@ -1,8 +1,49 @@
+import re
+from datetime import datetime
+
 import httpx
 
 from app.services.crawl.errors import CrawlFetchError
 from app.services.crawl.provider import CrawlResult
 from app.services.crawl.url_guard import guard_url
+
+# Crawl4AI's own documented default pruning config (docs/examples/docker/
+# demo_docker_api.py) — asking for this populates `markdown.fit_markdown`
+# (boilerplate-stripped) instead of leaving it empty, which is what happens
+# with no crawler_config at all (today's behavior).
+_CRAWLER_CONFIG = {
+    "type": "CrawlerRunConfig",
+    "params": {
+        "markdown_generator": {
+            "type": "DefaultMarkdownGenerator",
+            "params": {
+                "content_filter": {
+                    "type": "PruningContentFilter",
+                    "params": {"threshold": 0.6, "threshold_type": "relative"},
+                }
+            },
+        }
+    },
+}
+
+# Tried in order against the crawled page's raw HTML. Neither requires
+# Crawl4AI-side config — both are always present in its response, just not
+# parsed today.
+_JSON_LD_DATE_RE = re.compile(r'"datePublished"\s*:\s*"([^"]+)"')
+_OG_DATE_RE = re.compile(r'article:published_time"\s+content="([^"]+)"')
+
+
+def _extract_published_at(html: str) -> datetime | None:
+    for pattern in (_JSON_LD_DATE_RE, _OG_DATE_RE):
+        match = pattern.search(html)
+        if not match:
+            continue
+        raw = match.group(1).strip()
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+    return None
 
 
 class Crawl4AICrawlProvider:
@@ -39,7 +80,7 @@ class Crawl4AICrawlProvider:
 
         response = await self._client.post(
             f"{self._base_url}/crawl",
-            json={"urls": [url]},
+            json={"urls": [url], "crawler_config": _CRAWLER_CONFIG},
             headers={"Authorization": f"Bearer {self._api_token}"},
         )
         response.raise_for_status()
@@ -55,7 +96,7 @@ class Crawl4AICrawlProvider:
 
         markdown = result.get("markdown")
         if isinstance(markdown, dict):
-            markdown = markdown.get("raw_markdown", "")
+            markdown = markdown.get("fit_markdown") or markdown.get("raw_markdown", "")
         markdown = markdown or ""
 
         max_bytes = self._max_response_bytes
@@ -65,5 +106,8 @@ class Crawl4AICrawlProvider:
 
         metadata = result.get("metadata") or {}
         title = metadata.get("title") or result.get("title")
+        published_at = _extract_published_at(result.get("html") or "")
 
-        return CrawlResult(url=url, title=title, markdown=markdown, metadata=metadata)
+        return CrawlResult(
+            url=url, title=title, markdown=markdown, metadata=metadata, published_at=published_at
+        )

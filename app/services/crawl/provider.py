@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 
@@ -14,6 +15,7 @@ class CrawlResult:
     title: str | None
     markdown: str
     metadata: dict
+    published_at: datetime | None = None
 
 
 class CrawlProvider(Protocol):

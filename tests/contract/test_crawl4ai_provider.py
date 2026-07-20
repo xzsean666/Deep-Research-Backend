@@ -9,6 +9,8 @@ object with `raw_markdown`) has changed across Crawl4AI versions — that
 volatility is exactly why it's isolated to crawl4ai_provider.py.
 """
 
+import json
+
 import httpx
 import pytest
 
@@ -114,6 +116,155 @@ async def test_truncates_markdown_over_max_bytes():
     result = await provider.crawl("https://example.com/big")
 
     assert len(result.markdown.encode("utf-8")) <= 10
+
+
+async def test_prefers_fit_markdown_over_raw_markdown_when_present():
+    payload = {
+        "results": [
+            {
+                "url": "u",
+                "success": True,
+                "markdown": {"raw_markdown": "# Nav\nlink\nlink\nBody text.", "fit_markdown": "Body text."},
+                "metadata": {},
+            }
+        ]
+    }
+    client = httpx.AsyncClient(transport=_transport(payload))
+    provider = Crawl4AICrawlProvider(
+        base_url="http://crawl4ai.test",
+        fetch_timeout_seconds=5,
+        max_response_bytes=5_000_000,
+        client=client,
+        api_token="test-token",
+    )
+
+    result = await provider.crawl("https://example.com/article")
+
+    assert result.markdown == "Body text."
+
+
+async def test_falls_back_to_raw_markdown_when_fit_markdown_empty():
+    payload = {
+        "results": [
+            {
+                "url": "u",
+                "success": True,
+                "markdown": {"raw_markdown": "# Title\n\nBody text.", "fit_markdown": ""},
+                "metadata": {},
+            }
+        ]
+    }
+    client = httpx.AsyncClient(transport=_transport(payload))
+    provider = Crawl4AICrawlProvider(
+        base_url="http://crawl4ai.test",
+        fetch_timeout_seconds=5,
+        max_response_bytes=5_000_000,
+        client=client,
+        api_token="test-token",
+    )
+
+    result = await provider.crawl("https://example.com/article")
+
+    assert result.markdown == "# Title\n\nBody text."
+
+
+async def test_sends_crawler_config_requesting_pruning_filter():
+    seen_body = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_body.update(json.loads(request.content))
+        return httpx.Response(200, json=_FIXTURE_SUCCESS)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = Crawl4AICrawlProvider(
+        base_url="http://crawl4ai.test",
+        fetch_timeout_seconds=5,
+        max_response_bytes=5_000_000,
+        client=client,
+        api_token="test-token",
+    )
+
+    await provider.crawl("https://example.com/article")
+
+    assert seen_body["crawler_config"]["params"]["markdown_generator"]["params"]["content_filter"][
+        "type"
+    ] == "PruningContentFilter"
+
+
+async def test_extracts_published_at_from_json_ld():
+    payload = {
+        "results": [
+            {
+                "url": "u",
+                "success": True,
+                "markdown": "body",
+                "metadata": {},
+                "html": '<script type="application/ld+json">{"datePublished":"2026-07-08T23:13:34-04:00"}</script>',
+            }
+        ]
+    }
+    client = httpx.AsyncClient(transport=_transport(payload))
+    provider = Crawl4AICrawlProvider(
+        base_url="http://crawl4ai.test",
+        fetch_timeout_seconds=5,
+        max_response_bytes=5_000_000,
+        client=client,
+        api_token="test-token",
+    )
+
+    result = await provider.crawl("https://example.com/article")
+
+    assert result.published_at is not None
+    assert result.published_at.year == 2026
+    assert result.published_at.month == 7
+
+
+async def test_extracts_published_at_from_og_fallback_when_no_json_ld():
+    payload = {
+        "results": [
+            {
+                "url": "u",
+                "success": True,
+                "markdown": "body",
+                "metadata": {},
+                "html": '<meta property="article:published_time" content="2026-06-01T00:00:00Z">',
+            }
+        ]
+    }
+    client = httpx.AsyncClient(transport=_transport(payload))
+    provider = Crawl4AICrawlProvider(
+        base_url="http://crawl4ai.test",
+        fetch_timeout_seconds=5,
+        max_response_bytes=5_000_000,
+        client=client,
+        api_token="test-token",
+    )
+
+    result = await provider.crawl("https://example.com/article")
+
+    assert result.published_at is not None
+    assert result.published_at.year == 2026
+    assert result.published_at.month == 6
+
+
+async def test_published_at_none_when_no_date_tags_present():
+    payload = {
+        "results": [
+            {"url": "u", "success": True, "markdown": "body", "metadata": {}, "html": "<html></html>"}
+        ]
+    }
+    client = httpx.AsyncClient(transport=_transport(payload))
+    provider = Crawl4AICrawlProvider(
+        base_url="http://crawl4ai.test",
+        fetch_timeout_seconds=5,
+        max_response_bytes=5_000_000,
+        client=client,
+        api_token="test-token",
+    )
+
+    result = await provider.crawl("https://example.com/article")
+
+    assert result.published_at is None
 
 
 async def test_guard_rejects_private_target_before_calling_provider():

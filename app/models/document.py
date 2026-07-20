@@ -29,6 +29,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     doc_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     search_vector: Mapped[str] = mapped_column(
         TSVECTOR,
         Computed(

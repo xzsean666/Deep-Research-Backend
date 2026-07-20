@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class SearchProviderName(StrEnum):
     SEARXNG = "searxng"
+    COMPOSITE = "composite"
 
 
 class CrawlProviderName(StrEnum):
@@ -24,6 +25,35 @@ class Settings(BaseSettings):
 
     search_provider: SearchProviderName = SearchProviderName.SEARXNG
     searxng_url: str
+
+    # Only read when search_provider == COMPOSITE — an unconfigured
+    # deployment never constructs these providers, so behavior is
+    # unchanged unless an operator opts in.
+    search_searxng_weight: float = 1.0
+    search_reddit_enabled: bool = False
+    search_reddit_weight: float = 0.4
+    search_reddit_max_results: int = 2
+    search_reddit_base_url: str = "https://www.reddit.com"
+    search_reddit_user_agent: str = "DeepResearchBackend/1.0"
+
+    search_github_enabled: bool = False
+    search_github_weight: float = 0.6
+    search_github_max_results: int = 3
+    search_github_base_url: str = "https://api.github.com"
+    # Optional — unauthenticated search works (10 req/min GitHub-enforced
+    # limit); a token raises that to 30 req/min. Empty means unauthenticated.
+    search_github_token: str = ""
+
+    # Trump's Truth Social feed specifically — relevant only for markets
+    # about his statements/policy. Kept at a low weight and small cap by
+    # design so an unrelated market can't be drowned in it; see
+    # truth_social_provider.py for why this isn't a primary source.
+    search_truth_social_enabled: bool = False
+    search_truth_social_weight: float = 0.2
+    search_truth_social_max_results: int = 2
+    search_truth_social_base_url: str = "https://truthsocial.com"
+
+    search_composite_timeout_seconds: float = 15.0
 
     crawl_provider: CrawlProviderName = CrawlProviderName.CRAWL4AI
     crawl4ai_url: str

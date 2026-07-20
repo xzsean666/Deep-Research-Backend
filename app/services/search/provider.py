@@ -14,6 +14,7 @@ class SearchResult:
     title: str | None
     snippet: str | None
     rank: int
+    source: str = "unknown"
 
 
 class SearchProvider(Protocol):

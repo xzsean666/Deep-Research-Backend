@@ -174,6 +174,8 @@ async def test_online_missing_document_blocking_reports_failure_on_dead_letter(
     assert response.status == ResearchStatus.COMPLETE_WITH_FAILURES
     assert response.failed == 1
     assert response.documents[0].error == "404 not found"
+    assert response.documents[0].title == "t"
+    assert response.documents[0].summary == "s"
 
 
 async def test_online_missing_document_background_returns_pending_immediately(

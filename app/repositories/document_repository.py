@@ -30,6 +30,7 @@ async def upsert(
     doc_metadata: dict,
     fetched_at: datetime,
     expires_at: datetime,
+    published_at: datetime | None = None,
 ) -> Document:
     """Insert a document, or refresh it in place if normalized_url already exists.
 
@@ -49,6 +50,7 @@ async def upsert(
             doc_metadata=doc_metadata,
             fetched_at=fetched_at,
             expires_at=expires_at,
+            published_at=published_at,
         )
         .on_conflict_do_update(
             index_elements=[Document.normalized_url],
@@ -61,6 +63,7 @@ async def upsert(
                 "metadata": doc_metadata,
                 "fetched_at": fetched_at,
                 "expires_at": expires_at,
+                "published_at": published_at,
             },
         )
         .returning(Document)

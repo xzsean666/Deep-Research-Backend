@@ -51,6 +51,7 @@ class ResearchDocument(BaseModel):
     semantic_score: float | None = None
     fetched_at: datetime | None = None
     expires_at: datetime | None = None
+    published_at: datetime | None = None
     error: str | None = None
     job_id: UUID | None = None
 
