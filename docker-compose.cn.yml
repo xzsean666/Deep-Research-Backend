@@ -1,0 +1,35 @@
+# Override, not a replacement for docker-compose.yml — apply both together:
+#   docker compose -f docker-compose.yml -f docker-compose.cn.yml build
+#   docker compose -f docker-compose.yml -f docker-compose.cn.yml up -d
+# Swaps which Dockerfile each service builds from (the *.cn siblings — same
+# image, different package mirrors, for hosts where the default PyPI/apt/
+# apk/GitHub-releases endpoints are slow or unreliable to reach).
+#
+# crawl4ai's *.cn image additionally layers a transparent egress-proxy
+# wrapper (redsocks + iptables — see docker/crawl4ai/Dockerfile.cn and
+# docker-entrypoint-proxy.sh) that routes its outbound TCP through the
+# `xray` service whenever OUTBOUND_PROXY_URL is a vless:// link. This is
+# the only way to make Crawl4AI's actual page-fetch traffic honor that
+# proxy: its own server deliberately refuses proxy_config from any network
+# request (a real SSRF guard, not a bug), so there's no in-app way to set
+# it. NET_ADMIN is required for the container to install its own iptables
+# rules in its own network namespace — scoped to this one container, not a
+# host-wide capability grant.
+services:
+  searxng:
+    build:
+      dockerfile: ../../docker/searxng/Dockerfile.cn
+  crawl4ai:
+    build:
+      dockerfile: ../../docker/crawl4ai/Dockerfile.cn
+    cap_add:
+      - NET_ADMIN
+  xray:
+    build:
+      dockerfile: Dockerfile.cn
+  api:
+    build:
+      dockerfile: Dockerfile.cn
+  worker:
+    build:
+      dockerfile: Dockerfile.cn

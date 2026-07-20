@@ -96,6 +96,32 @@ services:
       retries: 3
       start_period: 40s
 
+  # Opt-in — only built/started when the "proxy" profile is active (set
+  # COMPOSE_PROFILES=proxy in .env, or pass --profile proxy). Converts
+  # OUTBOUND_PROXY_URL=vless://... into a local xray-core SOCKS5 proxy that
+  # api/worker/crawl4ai all reach at socks5://xray:1080 over this compose
+  # network — see docker/xray/ for why this needs to be its own service
+  # rather than something api/worker spawn themselves (crawl4ai forwards
+  # the proxy address to its own outbound fetch, so it needs a network-
+  # reachable address, not a loopback one; worker is also scaled, so a
+  # per-replica subprocess wouldn't have a stable address either). Not
+  # wired up via `depends_on` from api/worker/crawl4ai: those depend on a
+  # profile-gated service only when an operator actually enables it, and
+  # depends_on can't express "only if the profile is active".
+  xray:
+    build: ./docker/xray
+    container_name: ${PROJECT_PREFIX:-deep-research-backend}-xray
+    restart: unless-stopped
+    profiles: ["proxy"]
+    environment:
+      OUTBOUND_PROXY_URL: ${OUTBOUND_PROXY_URL}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 1080), 2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   api:
     build: .
     container_name: ${PROJECT_PREFIX:-deep-research-backend}-api

@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     # deploy/searxng/settings.yml.
     outbound_proxy_url: str = ""
 
+    # Only read when outbound_proxy_url starts with "vless://" — see
+    # app/services/proxy/__init__.py. Points at the `xray` compose service
+    # (docker/xray/), which is what actually speaks vless. Default matches
+    # that service's fixed name/port; override only if renamed or run
+    # elsewhere (e.g. a bare-host deployment with its own xray-core).
+    outbound_proxy_xray_url: str = "socks5://xray:1080"
+
     crawl_provider: CrawlProviderName = CrawlProviderName.CRAWL4AI
     crawl4ai_url: str
     # Crawl4AI refuses to bind beyond loopback without this (see

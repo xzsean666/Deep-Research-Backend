@@ -1,0 +1,387 @@
+# syntax=docker/dockerfile:1.4
+# Sibling of vendor/crawl4ai/Dockerfile, not a replacement — same build,
+# only the apt/PyPI/Playwright-browser-download mirrors differ (defaults
+# are slow/unreliable from some hosts). Lives outside the vendored
+# vendor/crawl4ai submodule on purpose, same as docker/searxng/Dockerfile
+# does for vendor/searxng — the submodule stays untouched; only its
+# checked-out tree is used as a build *context*. Used via
+# docker-compose.cn.yml. Keep in sync with vendor/crawl4ai/Dockerfile by
+# hand when re-diffing against a new pinned upstream commit.
+#
+# Build context MUST be vendor/crawl4ai (the repo root), not this
+# directory — same requirement as docker/searxng/Dockerfile, see
+# docker-compose.cn.yml.
+
+FROM python:3.12-slim-bookworm AS build
+
+ARG C4AI_VER=0.9.2
+ENV C4AI_VERSION=$C4AI_VER
+LABEL c4ai.version=$C4AI_VER
+
+ARG APP_HOME=/app
+ARG GITHUB_REPO=https://github.com/unclecode/crawl4ai.git
+ARG GITHUB_BRANCH=main
+ARG USE_LOCAL=true
+
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100 \
+    DEBIAN_FRONTEND=noninteractive \
+    REDIS_HOST=localhost \
+    REDIS_PORT=6379 \
+    PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" \
+    PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright"
+
+ARG PYTHON_VERSION=3.12
+ARG INSTALL_TYPE=default
+ARG ENABLE_GPU=false
+ARG TARGETARCH
+
+ARG REDIS_VERSION="6:7.2.7-1rl1~bookworm1"
+
+LABEL maintainer="unclecode"
+LABEL description="Crawl4AI: Open-source LLM Friendly Web Crawler & scraper"
+LABEL version="1.0"
+
+# Debian's default mirror is slow/unreliable from some hosts — swapped
+# before any apt-get calls below (all of them, including the Redis repo
+# added next, inherit this). python:3.12-slim-bookworm uses the deb822
+# sources format (/etc/apt/sources.list.d/debian.sources), not the classic
+# /etc/apt/sources.list.
+RUN sed -i 's#deb.debian.org#mirrors.aliyun.com#g' /etc/apt/sources.list.d/debian.sources
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb bookworm main" \
+    > /etc/apt/sources.list.d/redis.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    wget \
+    gnupg \
+    git \
+    cmake \
+    pkg-config \
+    python3-dev \
+    libjpeg-dev \
+    redis-tools${REDIS_VERSION:+=$REDIS_VERSION} \
+    redis-server${REDIS_VERSION:+=$REDIS_VERSION} \
+    supervisor \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libxcb1 \
+    libxkbcommon0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libatspi2.0-0 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get dist-upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN if [ "$ENABLE_GPU" = "true" ] && [ "$TARGETARCH" = "amd64" ] ; then \
+    echo "deb http://mirrors.aliyun.com/debian bookworm contrib non-free" >> /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    nvidia-cuda-toolkit \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* ; \
+else \
+    echo "Skipping NVIDIA CUDA Toolkit installation (unsupported platform or GPU disabled)"; \
+fi
+
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+    echo "Installing ARM-specific optimizations"; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    libopenblas-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*; \
+elif [ "$TARGETARCH" = "amd64" ]; then \
+    echo "Installing AMD64-specific optimizations"; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    libomp-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*; \
+else \
+    echo "Skipping platform-specific optimizations (unsupported platform)"; \
+fi
+
+RUN groupadd -r appuser && useradd --no-log-init -r -g appuser appuser
+
+RUN mkdir -p /home/appuser && chown -R appuser:appuser /home/appuser
+
+WORKDIR ${APP_HOME}
+
+RUN echo '#!/bin/bash\n\
+if [ "$USE_LOCAL" = "true" ]; then\n\
+    echo "Installing from local source..."\n\
+    pip install --no-cache-dir /tmp/project/\n\
+else\n\
+    echo "Installing from GitHub..."\n\
+    for i in {1..3}; do \n\
+        git clone --branch ${GITHUB_BRANCH} ${GITHUB_REPO} /tmp/crawl4ai && break || \n\
+        { echo "Attempt $i/3 failed! Taking a short break..."; sleep 5; }; \n\
+    done\n\
+    pip install --no-cache-dir /tmp/crawl4ai\n\
+fi' > /tmp/install.sh && chmod +x /tmp/install.sh
+
+COPY . /tmp/project/
+
+COPY deploy/docker/supervisord.conf .
+
+COPY deploy/docker/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+RUN if [ "$INSTALL_TYPE" = "all" ] ; then \
+        pip install --no-cache-dir \
+            torch \
+            torchvision \
+            torchaudio \
+            scikit-learn \
+            nltk \
+            transformers \
+            tokenizers && \
+        python -m nltk.downloader punkt stopwords ; \
+    fi
+
+RUN if [ "$INSTALL_TYPE" = "all" ] ; then \
+        pip install "/tmp/project/[all]" && \
+        python -m crawl4ai.model_loader ; \
+    elif [ "$INSTALL_TYPE" = "torch" ] ; then \
+        pip install "/tmp/project/[torch]" ; \
+    elif [ "$INSTALL_TYPE" = "transformer" ] ; then \
+        pip install "/tmp/project/[transformer]" && \
+        python -m crawl4ai.model_loader ; \
+    else \
+        pip install "/tmp/project" ; \
+    fi
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    /tmp/install.sh && \
+    python -c "import crawl4ai; print('crawl4ai is ready')" && \
+    python -c "from playwright.sync_api import sync_playwright; print('Playwright is ready')"
+
+RUN crawl4ai-setup
+
+RUN playwright install --with-deps
+
+RUN mkdir -p /home/appuser/.cache/ms-playwright \
+    && cp -r /root/.cache/ms-playwright/chromium-* \
+        /root/.cache/ms-playwright/chromium_headless_shell-* \
+        /home/appuser/.cache/ms-playwright/ \
+    && chown -R appuser:appuser /home/appuser/.cache/ms-playwright
+
+RUN crawl4ai-doctor
+
+RUN mkdir -p /home/appuser/.cache \
+    && chown -R appuser:appuser /home/appuser/.cache
+
+COPY deploy/docker/* ${APP_HOME}/
+
+COPY deploy/docker/static ${APP_HOME}/static
+
+RUN chown -R root:root ${APP_HOME} && chmod -R a-w ${APP_HOME}
+
+RUN mkdir -p /var/lib/redis /var/log/redis && chown -R appuser:appuser /var/lib/redis /var/log/redis
+
+RUN mkdir -p /var/lib/crawl4ai/outputs \
+    && chown -R appuser:appuser /var/lib/crawl4ai \
+    && chmod 700 /var/lib/crawl4ai/outputs
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD bash -c '\
+    MEM=$(free -m | awk "/^Mem:/{print \$2}"); \
+    if [ $MEM -lt 2048 ]; then \
+        echo "Warning: Less than 2GB RAM available"; \
+        exit 1; \
+    fi && \
+    redis-cli ping > /dev/null && \
+    curl -f http://localhost:11235/health || exit 1'
+
+USER appuser
+
+ENV PYTHON_ENV=production
+
+CMD ["bash", "entrypoint.sh"]
+
+# ── transparent-egress-proxy wrapper stage ──────────────────────────────
+# Layered on top, not folded into the stage above, so it stays obviously
+# separate from the upstream-mirroring `build` stage. See
+# docker-entrypoint-proxy.sh for why this exists (crawl4ai's own server
+# refuses proxy_config from any network request — a deliberate SSRF guard,
+# not a bug — so the only place left to inject a proxy is below the app,
+# at the OS network layer).
+FROM build AS proxy
+
+USER root
+
+RUN sed -i 's#deb.debian.org#mirrors.aliyun.com#g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends redsocks iptables gosu \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build context is vendor/crawl4ai (see docker-compose.cn.yml), so COPY
+# can't reach docker-entrypoint-proxy.sh — it's a sibling of this
+# Dockerfile, not inside that context. Inlined instead; keep this in sync
+# with docker/crawl4ai/docker-entrypoint-proxy.sh (kept alongside as the
+# readable, directly-runnable copy for editing).
+RUN cat <<'PROXY_ENTRYPOINT' > /docker-entrypoint-proxy.sh
+#!/bin/bash
+set -euo pipefail
+
+XRAY_HOST="${EGRESS_PROXY_HOST:-xray}"
+XRAY_PORT="${EGRESS_PROXY_PORT:-1080}"
+REDSOCKS_PORT=12345
+
+XRAY_IP=""
+for _ in $(seq 1 20); do
+    XRAY_IP="$(getent hosts "$XRAY_HOST" 2>/dev/null | awk '{print $1}' | head -n1 || true)"
+    [ -n "$XRAY_IP" ] && break
+    sleep 0.5
+done
+
+if [ -z "$XRAY_IP" ]; then
+    echo "docker-entrypoint-proxy: could not resolve $XRAY_HOST after 10s — proceeding with direct egress (no vless proxy configured, or the xray service/profile isn't running)" >&2
+else
+    cat > /etc/redsocks.conf <<EOF
+base {
+    log_debug = off;
+    log_info = on;
+    log = stderr;
+    daemon = off;
+    redirector = iptables;
+}
+redsocks {
+    local_ip = 127.0.0.1;
+    local_port = ${REDSOCKS_PORT};
+    ip = ${XRAY_IP};
+    port = ${XRAY_PORT};
+    type = socks5;
+}
+EOF
+
+    redsocks -c /etc/redsocks.conf -p /var/run/redsocks.pid &
+
+    for _ in $(seq 1 20); do
+        if (exec 3<>"/dev/tcp/127.0.0.1/${REDSOCKS_PORT}") 2>/dev/null; then
+            exec 3>&- 3<&-
+            break
+        fi
+        sleep 0.25
+    done
+
+    iptables -t nat -N REDSOCKS 2>/dev/null || iptables -t nat -F REDSOCKS
+    iptables -t nat -A REDSOCKS -d 127.0.0.0/8 -j RETURN
+    iptables -t nat -A REDSOCKS -d 10.0.0.0/8 -j RETURN
+    iptables -t nat -A REDSOCKS -d 172.16.0.0/12 -j RETURN
+    iptables -t nat -A REDSOCKS -d 192.168.0.0/16 -j RETURN
+    iptables -t nat -A REDSOCKS -d 169.254.0.0/16 -j RETURN
+    iptables -t nat -A REDSOCKS -d "${XRAY_IP}" -j RETURN
+    iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports "${REDSOCKS_PORT}"
+    iptables -t nat -A OUTPUT -p tcp -j REDSOCKS
+
+    echo "docker-entrypoint-proxy: outbound TCP transparently routed via ${XRAY_HOST}(${XRAY_IP}):${XRAY_PORT}"
+fi
+
+# Reopening /dev/stdout by path after a root->appuser setuid fails with
+# EACCES — a real Linux kernel restriction: a pipe's /proc/$PID/fd entry
+# can only be reopened via path by the uid that originally owned it (root,
+# in this container's case, since the runtime sets up stdio before this
+# script runs); `ls` shows it as appuser-owned, but only root can actually
+# reopen it (see moby/moby#31243). supervisord's own stdout/stderr are
+# fine (inherited via fork/exec, not reopened) — the break is specifically
+# supervisord's *children* (redis, gunicorn), whose stdout_logfile config
+# tries to open("/dev/stdout") fresh as appuser. Fix: point those at real
+# files instead (see the supervisord.conf override below — a regular fs
+# path has no such restriction), and forward them back to the container's
+# actual stdout/stderr here, while still root, so `docker logs` keeps
+# showing everything.
+mkdir -p /var/log/crawl4ai-proxy
+touch /var/log/crawl4ai-proxy/redis-stdout.log /var/log/crawl4ai-proxy/redis-stderr.log \
+      /var/log/crawl4ai-proxy/gunicorn-stdout.log /var/log/crawl4ai-proxy/gunicorn-stderr.log
+chown -R appuser:appuser /var/log/crawl4ai-proxy
+
+tail -F -n0 /var/log/crawl4ai-proxy/redis-stdout.log /var/log/crawl4ai-proxy/gunicorn-stdout.log &
+tail -F -n0 /var/log/crawl4ai-proxy/redis-stderr.log /var/log/crawl4ai-proxy/gunicorn-stderr.log >&2 &
+
+exec gosu appuser "$@"
+PROXY_ENTRYPOINT
+RUN chmod +x /docker-entrypoint-proxy.sh
+
+# Sibling of vendor/crawl4ai/deploy/docker/supervisord.conf — identical
+# except stdout_logfile/stderr_logfile point at real files instead of
+# /dev/stdout/stderr (see docker-entrypoint-proxy.sh above for why: those
+# paths can't be reopened by appuser after this image's root->appuser
+# setuid). Overwrites the vendored copy already baked into this image by
+# the `build` stage above — the vendor *source* file is untouched, only
+# this build's own layer differs.
+RUN cat <<'SUPERVISORD_CONF' > /app/supervisord.conf
+[supervisord]
+nodaemon=true                   ; Run supervisord in the foreground
+logfile=/dev/null               ; Log supervisord output to stdout/stderr
+logfile_maxbytes=0
+
+[program:redis]
+; Loopback-only and password-protected. REDIS_PASSWORD is exported by
+; entrypoint.sh from the mounted secret; the app must supply it to connect.
+command=/usr/bin/redis-server --loglevel notice --bind 127.0.0.1 ::1 --requirepass "%(ENV_REDIS_PASSWORD)s" --dir /var/lib/redis
+user=appuser                    ; Run redis as our non-root user
+autorestart=true
+priority=10
+stdout_logfile=/var/log/crawl4ai-proxy/redis-stdout.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=1
+stderr_logfile=/var/log/crawl4ai-proxy/redis-stderr.log
+stderr_logfile_maxbytes=10MB
+stderr_logfile_backups=1
+
+[program:gunicorn]
+; Bind is resolved by entrypoint.sh into GUNICORN_BIND: loopback unless a
+; credential (CRAWL4AI_API_TOKEN) is present, in which case the operator may
+; expose 0.0.0.0. gunicorn is the authoritative socket-level guard; the Python
+; _resolve_auth() check is the in-process guard - both must agree.
+command=/usr/local/bin/gunicorn --bind "%(ENV_GUNICORN_BIND)s" --workers 1 --threads 4 --timeout 1800 --graceful-timeout 30 --keep-alive 300 --log-level info --limit-request-line 8190 --limit-request-fields 100 --worker-class uvicorn.workers.UvicornWorker server:app
+directory=/app                  ; Working directory for the app
+user=appuser                    ; Run gunicorn as our non-root user
+autorestart=true
+priority=20
+environment=PYTHONUNBUFFERED=1  ; Ensure Python output is sent straight to logs
+stdout_logfile=/var/log/crawl4ai-proxy/gunicorn-stdout.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=1
+stderr_logfile=/var/log/crawl4ai-proxy/gunicorn-stderr.log
+stderr_logfile_maxbytes=10MB
+stderr_logfile_backups=1
+SUPERVISORD_CONF
+RUN chown appuser:appuser /app/supervisord.conf
+
+# Setting a new ENTRYPOINT here without also redeclaring CMD would silently
+# reset the CMD inherited from the `build` stage to empty (a documented
+# Docker quirk) — entrypoint.sh would then run with no arguments at all.
+ENTRYPOINT ["/docker-entrypoint-proxy.sh"]
+CMD ["bash", "entrypoint.sh"]
