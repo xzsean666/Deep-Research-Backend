@@ -82,3 +82,17 @@ def test_omits_authorization_header_when_no_token():
     headers = _build_headers(token="", user_agent="ua")
 
     assert "Authorization" not in headers
+
+
+def test_passes_proxy_to_default_client(monkeypatch):
+    seen_kwargs = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs):
+            seen_kwargs.update(kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    GitHubSearchProvider(proxy="http://proxy.test:8080")
+
+    assert seen_kwargs["proxy"] == "http://proxy.test:8080"

@@ -149,3 +149,17 @@ async def test_falls_back_to_factbase_archive_when_primary_returns_empty():
 
     assert len(results) == 1
     assert results[0].url == "https://truthsocial.com/@realDonaldTrump/998877"
+
+
+def test_passes_proxy_to_default_client(monkeypatch):
+    seen_kwargs = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs):
+            seen_kwargs.update(kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    TruthSocialSearchProvider(proxy="http://proxy.test:8080")
+
+    assert seen_kwargs["proxy"] == "http://proxy.test:8080"

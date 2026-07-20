@@ -24,6 +24,7 @@ def _build_composite(settings: Settings) -> SearchProvider:
                 provider=RedditSearchProvider(
                     base_url=settings.search_reddit_base_url,
                     user_agent=settings.search_reddit_user_agent,
+                    proxy=settings.outbound_proxy_url or None,
                 ),
                 weight=settings.search_reddit_weight,
                 max_results=settings.search_reddit_max_results,
@@ -36,6 +37,7 @@ def _build_composite(settings: Settings) -> SearchProvider:
                 provider=GitHubSearchProvider(
                     base_url=settings.search_github_base_url,
                     token=settings.search_github_token,
+                    proxy=settings.outbound_proxy_url or None,
                 ),
                 weight=settings.search_github_weight,
                 max_results=settings.search_github_max_results,
@@ -45,7 +47,10 @@ def _build_composite(settings: Settings) -> SearchProvider:
         sources.append(
             WeightedSource(
                 name="truth_social",
-                provider=TruthSocialSearchProvider(base_url=settings.search_truth_social_base_url),
+                provider=TruthSocialSearchProvider(
+                    base_url=settings.search_truth_social_base_url,
+                    proxy=settings.outbound_proxy_url or None,
+                ),
                 weight=settings.search_truth_social_weight,
                 max_results=settings.search_truth_social_max_results,
             )

@@ -14,6 +14,7 @@ def get_crawl_provider(settings: Settings | None = None) -> CrawlProvider:
             fetch_timeout_seconds=settings.crawl_fetch_timeout_seconds,
             max_response_bytes=settings.crawl_max_response_bytes,
             api_token=settings.crawl4ai_api_token,
+            proxy_url=settings.outbound_proxy_url or None,
         )
     raise ValueError(f"Unknown crawl provider: {settings.crawl_provider}")
 

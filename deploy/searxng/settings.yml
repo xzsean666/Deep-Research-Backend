@@ -17,3 +17,15 @@ search:
   formats:
     - html
     - json
+
+# This is the lever for proxying SearXNG's OWN outbound queries to the
+# actual search engines (Google/Bing/DuckDuckGo/etc.) — separate from, and
+# independent of, this app's OUTBOUND_PROXY_URL (.env.example), which never
+# reaches SearXNG's own traffic since this app only calls SearXNG's internal
+# JSON API. Uncomment and set to route SearXNG's engine queries through a
+# proxy too. See vendor/searxng/searx/settings.yml (outgoing.proxies) for
+# the full option reference.
+# outgoing:
+#   proxies:
+#     all://:
+#       - http://proxy1:8080

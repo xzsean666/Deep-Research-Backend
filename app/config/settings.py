@@ -55,6 +55,19 @@ class Settings(BaseSettings):
 
     search_composite_timeout_seconds: float = 15.0
 
+    # Off by default — empty means every outbound call below behaves exactly
+    # as it does today (direct connection). Set to opt in; format is
+    # "http://[user:pass@]host:port" or "socks5://host:port". Applied to
+    # this app's own httpx clients that reach real public sites (Reddit,
+    # GitHub, Truth Social — see _build_composite in
+    # app/services/search/__init__.py) and forwarded to Crawl4AI as the
+    # proxy it fetches pages through (Crawl4AICrawlProvider). Deliberately
+    # NOT applied to SearXNGSearchProvider's client, whose target is the
+    # internal `searxng` docker service, not a public site — SearXNG's own
+    # outbound proxy for its engine queries is configured separately, see
+    # deploy/searxng/settings.yml.
+    outbound_proxy_url: str = ""
+
     crawl_provider: CrawlProviderName = CrawlProviderName.CRAWL4AI
     crawl4ai_url: str
     # Crawl4AI refuses to bind beyond loopback without this (see

@@ -81,3 +81,17 @@ async def test_skips_entries_without_a_url():
     results = await provider.search("example query", limit=5)
 
     assert all(r.title != "Malformed entry" for r in results)
+
+
+def test_passes_proxy_to_default_client(monkeypatch):
+    seen_kwargs = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs):
+            seen_kwargs.update(kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    RedditSearchProvider(proxy="http://proxy.test:8080")
+
+    assert seen_kwargs["proxy"] == "http://proxy.test:8080"

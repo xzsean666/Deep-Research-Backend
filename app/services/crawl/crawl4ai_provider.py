@@ -1,4 +1,5 @@
 import re
+from copy import deepcopy
 from datetime import datetime
 
 import httpx
@@ -68,19 +69,28 @@ class Crawl4AICrawlProvider:
         fetch_timeout_seconds: float,
         max_response_bytes: int,
         api_token: str,
+        proxy_url: str | None = None,
         client: httpx.AsyncClient | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._max_response_bytes = max_response_bytes
         self._api_token = api_token
+        self._proxy_url = proxy_url
         self._client = client or httpx.AsyncClient(timeout=fetch_timeout_seconds)
+
+    def _crawler_config(self) -> dict:
+        if not self._proxy_url:
+            return _CRAWLER_CONFIG
+        config = deepcopy(_CRAWLER_CONFIG)
+        config["params"]["proxy_config"] = self._proxy_url
+        return config
 
     async def crawl(self, url: str) -> CrawlResult:
         await guard_url(url)
 
         response = await self._client.post(
             f"{self._base_url}/crawl",
-            json={"urls": [url], "crawler_config": _CRAWLER_CONFIG},
+            json={"urls": [url], "crawler_config": self._crawler_config()},
             headers={"Authorization": f"Bearer {self._api_token}"},
         )
         response.raise_for_status()

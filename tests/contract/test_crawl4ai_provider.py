@@ -267,6 +267,49 @@ async def test_published_at_none_when_no_date_tags_present():
     assert result.published_at is None
 
 
+async def test_sends_proxy_config_when_proxy_url_set():
+    seen_body = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_body.update(json.loads(request.content))
+        return httpx.Response(200, json=_FIXTURE_SUCCESS)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = Crawl4AICrawlProvider(
+        base_url="http://crawl4ai.test",
+        fetch_timeout_seconds=5,
+        max_response_bytes=5_000_000,
+        client=client,
+        api_token="test-token",
+        proxy_url="http://proxy.test:8080",
+    )
+
+    await provider.crawl("https://example.com/article")
+
+    assert seen_body["crawler_config"]["params"]["proxy_config"] == "http://proxy.test:8080"
+
+
+async def test_omits_proxy_config_when_no_proxy_url():
+    seen_body = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_body.update(json.loads(request.content))
+        return httpx.Response(200, json=_FIXTURE_SUCCESS)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = Crawl4AICrawlProvider(
+        base_url="http://crawl4ai.test",
+        fetch_timeout_seconds=5,
+        max_response_bytes=5_000_000,
+        client=client,
+        api_token="test-token",
+    )
+
+    await provider.crawl("https://example.com/article")
+
+    assert "proxy_config" not in seen_body["crawler_config"]["params"]
+
+
 async def test_guard_rejects_private_target_before_calling_provider():
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("must not reach crawl4ai for a blocked URL")

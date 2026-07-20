@@ -76,11 +76,12 @@ class TruthSocialSearchProvider:
         self,
         base_url: str = "https://truthsocial.com",
         user_agent: str = _DEFAULT_USER_AGENT,
+        proxy: str | None = None,
         client: httpx.AsyncClient | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._client = client or httpx.AsyncClient(
-            timeout=10, headers={"Accept": "application/json", "User-Agent": user_agent}
+            timeout=10, headers={"Accept": "application/json", "User-Agent": user_agent}, proxy=proxy
         )
 
     async def search(self, query: str, limit: int) -> list[SearchResult]:
