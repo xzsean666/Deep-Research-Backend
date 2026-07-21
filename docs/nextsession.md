@@ -37,7 +37,8 @@ request-level timeout) and `background` (returns immediately with
 - [x] `app/repositories/` — document/crawl_job/api_key repositories, `FOR UPDATE SKIP LOCKED` job claim, `get_active_by_url` job dedup
 - [x] `app/services/worker/loop.py` + `app/worker_main.py` — claim → crawl → upsert → complete/fail(+backoff)/dead_letter; whole iteration now guarded against crashing the process
 - [x] `app/services/research/research_service.py` — blocking/background orchestration (ARCHITECTURE §5), dedupes in-flight jobs per URL
-- [x] `app/api/` — all routers (`research`, `crawl`, `documents`, `jobs`, `health`), auth dependency, error envelope + handlers (including `NOT_IMPLEMENTED` for semantic mode)
+- [x] `app/api/` — all routers (`research`, `crawl`, `documents`, `jobs`, `health`, `admin`), auth dependency (+ `require_admin`), error envelope + handlers (including `NOT_IMPLEMENTED` for semantic mode)
+- [x] `app/api/routers/admin.py` + `scripts/manage_api_keys.sh` — API key management (create/list/disable/enable/delete, expiry, `ADMIN_API_SECRET`-gated, fails closed). SPEC.md §10
 - [x] `main.py` — FastAPI app, request-id middleware, exception handlers, routers wired
 - [x] `Dockerfile` (api/worker, same image), `docker-compose.yml` (5 services, all `restart: unless-stopped`)
 - [x] `docker/searxng/Dockerfile` — merged multi-stage build (SearXNG's own build needs two cross-referencing Dockerfiles)
@@ -62,9 +63,11 @@ request-level timeout) and `background` (returns immediately with
 - **`markdown_truncated` threshold (200,000 bytes) is a hardcoded constant**
   in `research_service.py`, not a `Settings` field — promote it if a need
   to tune it shows up.
-- **No admin endpoint for API keys** — the live deployment's one key was
-  inserted directly via `psql`. Fine for one trusted caller; needs a real
-  endpoint (or at least a seed script) before adding more.
+- ~~No admin endpoint for API keys~~ — done: `/admin/api-keys`
+  (`app/api/routers/admin.py`, SPEC.md §10), gated by a separate
+  `ADMIN_API_SECRET`, plus `scripts/manage_api_keys.sh` for operator use.
+  Supports expiry (`expires_at`, `NULL` = permanent) and disable/enable
+  without deleting.
 - **No git remote for this repo** — the live deployment was `rsync`'d, not
   `git clone`d. See DEPLOYMENT.md's "Operating this deployment" for the
   current redeploy procedure; a git-based flow would be a real improvement.

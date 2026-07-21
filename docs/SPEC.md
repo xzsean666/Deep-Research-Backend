@@ -261,7 +261,9 @@ Operator-facing list of jobs that exhausted retries, for manual inspection.
 | `key_hash` | text | never store raw key |
 | `label` | text | |
 | `rate_limit_per_minute` | int | default from config |
-| `created_at` | timestamptz | |
+| `status` | text | `active \| disabled` — `require_api_key` (§1) rejects a `disabled` key without deleting it |
+| `expires_at` | timestamptz, nullable | `NULL` = permanent (default). `require_api_key` rejects an expired key |
+| `created_at` / `updated_at` | timestamptz | |
 
 ## 9. Configuration
 
@@ -272,6 +274,7 @@ from environment variables. No config is read anywhere else in the codebase.
 |---|---|---|
 | `DATABASE_URL` | required | postgres async DSN |
 | `REQUIRE_API_KEY` | `true` | set `false` only for a deployment already network-isolated to trusted callers — disables all API key auth, adds no other access control in its place (§1) |
+| `ADMIN_API_SECRET` | *(empty)* | gates `/admin/api-keys` (§10) — a separate secret from the `api_keys` table it manages. Empty means the admin API is fully disabled (every request gets 401), not open — the opposite of `REQUIRE_API_KEY=false` |
 | `SEARCH_PROVIDER` | `"searxng"` | selects the `SearchProvider` adapter (ARCHITECTURE §10) — a config flip, not a code change. `"composite"` fans out to SearXNG plus any enabled extra sources below, merged by weighted round-robin with a hard per-source cap (`app/services/search/composite_provider.py`) — never a blended cross-source score, so a noisy low-signal source can't drown out the primary source's results |
 | `SEARXNG_URL` | required | base URL of the vendored SearXNG service (ARCHITECTURE §13.2) |
 | `SEARCH_SEARXNG_WEIGHT` | `1.0` | only read under `SEARCH_PROVIDER=composite` — SearXNG's round-robin weight, uncapped |
@@ -296,3 +299,23 @@ from environment variables. No config is read anywhere else in the codebase.
 | `JOB_MAX_ATTEMPTS` | `3` | before `dead_letter` |
 | `WORKER_POLL_INTERVAL_SECONDS` | `1` | job claim poll interval |
 | `TTL_DOCS_DAYS` / `TTL_GITHUB_DAYS` / `TTL_BLOG_DAYS` / `TTL_NEWS_HOURS` | `30 / 7 / 7 / 6` | §6.2 ARCHITECTURE.md |
+
+## 10. Admin API
+
+Manages the `api_keys` table (§8) that `require_api_key` (§1) checks —
+creating, listing, disabling/enabling, and deleting keys. Not part of the
+`/v1` versioned surface: a separate operator-facing tier, gated by
+`ADMIN_API_SECRET` (§9), not by any `api_keys` row. Fails closed — an
+unconfigured `ADMIN_API_SECRET` means every request below gets `401`, not
+open access. `app/api/routers/admin.py`; see `scripts/manage_api_keys.sh`
+for a CLI wrapper meant to be run on the deployment host itself.
+
+All requests: `Authorization: Bearer <ADMIN_API_SECRET>`.
+
+| Endpoint | Notes |
+|---|---|
+| `POST /admin/api-keys` | Body: `label` (required), `rate_limit_per_minute` (default `60`), `expires_at` (ISO8601 or omitted/`null` for permanent). Response includes `raw_key` — shown **once**, never retrievable again (only `key_hash` is stored). `201` |
+| `GET /admin/api-keys` | List all keys — metadata only, never `key_hash` or a raw key |
+| `GET /admin/api-keys/{id}` | `404` if missing |
+| `PATCH /admin/api-keys/{id}` | Body: `status` (`active`\|`disabled`) and/or `expires_at` (`null` = make permanent) — only fields present in the body are changed |
+| `DELETE /admin/api-keys/{id}` | Hard delete. `204`. Prefer `PATCH .../status=disabled` over delete if you might want the key back — disabling keeps the row |

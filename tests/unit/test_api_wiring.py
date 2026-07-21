@@ -4,14 +4,23 @@ overrides rather than a live Postgres/SearXNG. Full DB-backed behavior is
 covered by integration tests (BUILD.md §5) once the compose stack exists.
 """
 
+import uuid
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_research_sessionmaker, get_search_provider_dep, require_api_key
 from app.config import ExecutionMode, get_settings
-from app.models import ApiKey
+from app.database import get_db_session
+from app.models import ApiKey, ApiKeyStatus
+from app.repositories import api_key_repository
 from app.schemas.research import RetrievalMode
 from app.services.search.provider import SearchResult
 from main import app
+
+
+async def _fake_db_session():
+    yield None
 
 
 class _FakeSession:
@@ -141,5 +150,102 @@ def test_semantic_mode_returns_clean_501_not_a_raw_500():
         )
         assert response.status_code == 501
         assert response.json()["error"]["code"] == "NOT_IMPLEMENTED"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_admin_api_rejects_when_secret_unconfigured(settings):
+    app.dependency_overrides[get_settings] = lambda: settings  # admin_api_secret == ""
+    try:
+        client = TestClient(app)
+        response = client.get("/admin/api-keys", headers={"Authorization": "Bearer anything"})
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "UNAUTHORIZED"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_admin_api_rejects_wrong_secret(settings):
+    configured = settings.model_copy(update={"admin_api_secret": "correct-secret"})
+    app.dependency_overrides[get_settings] = lambda: configured
+    try:
+        client = TestClient(app)
+        response = client.get("/admin/api-keys", headers={"Authorization": "Bearer wrong"})
+        assert response.status_code == 401
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_admin_api_key_lifecycle_create_list_disable_delete(settings, monkeypatch):
+    """Create -> the raw key is only ever in the create response. List/get
+    never expose it or the hash. Disable flips status without deleting.
+    Delete removes it; get then 404s."""
+    store: dict[uuid.UUID, ApiKey] = {}
+
+    async def fake_create(session, *, key_hash, label, rate_limit_per_minute, expires_at):
+        key = ApiKey(
+            key_hash=key_hash,
+            label=label,
+            rate_limit_per_minute=rate_limit_per_minute,
+            expires_at=expires_at,
+            status=ApiKeyStatus.ACTIVE,
+        )
+        key.id = uuid.uuid4()
+        key.created_at = datetime.now(UTC)
+        key.updated_at = datetime.now(UTC)
+        store[key.id] = key
+        return key
+
+    async def fake_list_all(session):
+        return list(store.values())
+
+    async def fake_get_by_id(session, key_id):
+        return store.get(key_id)
+
+    async def fake_update_status(session, api_key, status):
+        api_key.status = status
+        return api_key
+
+    async def fake_delete(session, api_key):
+        del store[api_key.id]
+
+    monkeypatch.setattr(api_key_repository, "create", fake_create)
+    monkeypatch.setattr(api_key_repository, "list_all", fake_list_all)
+    monkeypatch.setattr(api_key_repository, "get_by_id", fake_get_by_id)
+    monkeypatch.setattr(api_key_repository, "update_status", fake_update_status)
+    monkeypatch.setattr(api_key_repository, "delete", fake_delete)
+
+    configured = settings.model_copy(update={"admin_api_secret": "correct-secret"})
+    app.dependency_overrides[get_settings] = lambda: configured
+    app.dependency_overrides[get_db_session] = _fake_db_session
+    headers = {"Authorization": "Bearer correct-secret"}
+
+    try:
+        client = TestClient(app)
+
+        created = client.post("/admin/api-keys", json={"label": "ops-key"}, headers=headers)
+        assert created.status_code == 201
+        body = created.json()
+        assert "raw_key" in body and len(body["raw_key"]) > 20
+        assert body["status"] == "active"
+        assert body["expires_at"] is None
+        key_id = body["id"]
+
+        listed = client.get("/admin/api-keys", headers=headers)
+        assert listed.status_code == 200
+        assert "raw_key" not in listed.json()[0]
+        assert "key_hash" not in listed.json()[0]
+
+        disabled = client.patch(
+            f"/admin/api-keys/{key_id}", json={"status": "disabled"}, headers=headers
+        )
+        assert disabled.status_code == 200
+        assert disabled.json()["status"] == "disabled"
+
+        deleted = client.delete(f"/admin/api-keys/{key_id}", headers=headers)
+        assert deleted.status_code == 204
+
+        missing = client.get(f"/admin/api-keys/{key_id}", headers=headers)
+        assert missing.status_code == 404
     finally:
         app.dependency_overrides.clear()

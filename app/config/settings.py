@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     # does not add any other access control. SPEC.md §1.
     require_api_key: bool = True
 
+    # Gates /admin/api-keys (app/api/routers/admin.py), which manages the
+    # api_keys table itself — deliberately a separate secret from
+    # REQUIRE_API_KEY/api_keys, not reusable as an ordinary API key. Empty
+    # (default) means the admin API is entirely disabled — every request
+    # to it gets 401, not "open access". Set to a generated secret
+    # (`python3 -c "import secrets; print(secrets.token_hex(32))"`) to
+    # enable it; see scripts/manage_api_keys.sh for the operator CLI.
+    admin_api_secret: str = ""
+
     research_execution_mode_default: ExecutionMode = ExecutionMode.BLOCKING
 
     crawl_max_response_bytes: int = 5_000_000
