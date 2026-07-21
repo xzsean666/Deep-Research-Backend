@@ -43,7 +43,7 @@ def test_parses_tcp_tls():
     assert target["sni"] == "cdn.example.com"
     assert target["fingerprint"] == "chrome"
 
-    config = xray_entrypoint.build_xray_config(target, socks_port=10808)
+    config = xray_entrypoint.build_xray_config(target, socks_port=10808, http_port=10809)
     outbound = config["outbounds"][0]
     assert outbound["streamSettings"]["tlsSettings"]["serverName"] == "cdn.example.com"
     assert config["inbounds"][0]["port"] == 10808
@@ -61,7 +61,7 @@ def test_parses_tcp_reality_with_vision_flow():
     assert target["public_key"] == "abcDEF123"
     assert target["short_id"] == "deadbeef"
 
-    config = xray_entrypoint.build_xray_config(target, socks_port=10808)
+    config = xray_entrypoint.build_xray_config(target, socks_port=10808, http_port=10809)
     outbound = config["outbounds"][0]
     reality = outbound["streamSettings"]["realitySettings"]
     assert reality["publicKey"] == "abcDEF123"
@@ -79,7 +79,7 @@ def test_parses_ws_tls():
     assert target["ws_host"] == "ws.example.com"
     assert target["ws_path"] == "/api/ws"
 
-    config = xray_entrypoint.build_xray_config(target, socks_port=10808)
+    config = xray_entrypoint.build_xray_config(target, socks_port=10808, http_port=10809)
     ws_settings = config["outbounds"][0]["streamSettings"]["wsSettings"]
     assert ws_settings["path"] == "/api/ws"
     assert ws_settings["headers"]["Host"] == "ws.example.com"
@@ -87,12 +87,25 @@ def test_parses_ws_tls():
 
 def test_socks_inbound_has_no_auth_and_no_udp():
     target = xray_entrypoint.parse_vless_uri("vless://uuid-d@example.com:443?security=none&type=tcp")
-    config = xray_entrypoint.build_xray_config(target, socks_port=10808)
+    config = xray_entrypoint.build_xray_config(target, socks_port=10808, http_port=10809)
 
     inbound = config["inbounds"][0]
     assert inbound["protocol"] == "socks"
     assert inbound["settings"]["auth"] == "noauth"
     assert inbound["settings"]["udp"] is False
+
+
+def test_http_inbound_present_alongside_socks_on_its_own_port():
+    # SearXNG's own SOCKS5 client library breaks TLS handshakes over this
+    # vless connection (see entrypoint.py's module docstring) — its
+    # settings.proxy.yml uses this HTTP inbound instead, so both must exist.
+    target = xray_entrypoint.parse_vless_uri("vless://uuid-e@example.com:443?security=none&type=tcp")
+    config = xray_entrypoint.build_xray_config(target, socks_port=10808, http_port=10809)
+
+    assert len(config["inbounds"]) == 2
+    http_inbound = config["inbounds"][1]
+    assert http_inbound["protocol"] == "http"
+    assert http_inbound["port"] == 10809
 
 
 def test_get_outbound_proxy_url_passthrough_for_http_and_socks5():

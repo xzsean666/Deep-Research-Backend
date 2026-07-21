@@ -1,0 +1,45 @@
+# Sibling of settings.yml, not a replacement — identical except
+# outgoing.proxies is filled in. Used only when OUTBOUND_PROXY_URL is a
+# vless:// link (docker-compose.cn.yml mounts this instead of settings.yml
+# for the searxng service) — SearXNG's own outbound queries to the actual
+# search engines need to go through the `xray` service, otherwise every
+# engine just times out (confirmed live: all 5 default engines —
+# brave/duckduckgo/google cse/startpage/wikipedia — timed out with this
+# unset on a host where direct connections to them are blocked).
+#
+# http://xray:1081, not socks5://xray:1080: SearXNG's SOCKS5 client
+# (httpx-socks/python_socks) reproducibly fails the TLS handshake partway
+# through when tunneled via SOCKS5 over this vless connection
+# (anyio.EndOfStream) — confirmed independent of engine, of concurrency,
+# and of the vless connection itself (a plain httpx call using httpx's
+# *native* SOCKS5 support, socksio, succeeds fine against the same
+# destinations over the same socks5://xray:1080). httpx's native
+# HTTP-proxy CONNECT tunneling doesn't go through python_socks at all, so
+# this uses xray's second inbound (docker/xray/entrypoint.py's HTTP_PORT)
+# instead of chasing the incompatibility inside a third-party async SOCKS5
+# implementation.
+#
+# See settings.yml's own comment for why this is a separate lever from
+# OUTBOUND_PROXY_URL (this app's own outbound calls never reach SearXNG's
+# traffic — SearXNG only ever sees this app's *internal* JSON API calls).
+use_default_settings: true
+
+server:
+  secret_key: "ultrasecretkey"  # overwritten by ${SEARXNG_SECRET} at runtime
+
+search:
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 15.0
+  # SearXNG's default 3.0s request_timeout doesn't account for the extra
+  # round-trip through the vless tunnel — this pads every engine's timeout
+  # rather than raising request_timeout itself, which would otherwise also
+  # slow down the (fast) non-proxied case.
+  extra_proxy_timeout: 10
+  proxies:
+    all://:
+      - http://xray:1081

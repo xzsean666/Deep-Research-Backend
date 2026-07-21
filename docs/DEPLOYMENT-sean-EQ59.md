@@ -84,6 +84,27 @@ COMPOSE_PROFILES=proxy
 - **Known limitation**: `redsocks` only redirects TCP; DNS (UDP) resolution
   stays direct. Fine here (confirmed: DNS resolves fine, only the TCP
   connect itself was blocked) — would not help if DNS itself were censored.
+- **SearXNG's own outbound search-engine queries needed a third, separate
+  fix.** They don't go through `OUTBOUND_PROXY_URL` at all (that's this
+  app's own outbound calls; SearXNG only ever sees this app's *internal*
+  JSON API — see `deploy/searxng/settings.yml`'s own comment) and default
+  to direct connections, so every engine (brave/duckduckgo/google
+  cse/startpage/wikipedia) timed out. Fixed with
+  `deploy/searxng/settings.proxy.yml` (a sibling of `settings.yml`, swapped
+  in only by `docker-compose.cn.yml`'s searxng volume override) setting
+  `outgoing.proxies`. First attempt pointed it at `socks5://xray:1080` —
+  the same SOCKS5 port everything else uses — but SearXNG's SOCKS5 client
+  library (`httpx-socks`/`python_socks`) reproducibly failed the TLS
+  handshake partway through (`anyio.EndOfStream`), confirmed independent of
+  engine, concurrency, and the tunnel itself (a plain `httpx` call using
+  httpx's *native* SOCKS5 support, `socksio`, succeeded fine against the
+  same destinations over the same port). Fixed by giving `xray` a second
+  inbound — a plain HTTP (CONNECT) proxy on port `1081`
+  (`docker/xray/entrypoint.py`'s `HTTP_PORT`) — and pointing SearXNG at
+  `http://xray:1081` instead; httpx's native HTTP-proxy path doesn't touch
+  `python_socks` at all. Confirmed live: real multi-engine results
+  (duckduckgo/google cse/startpage all contributing) for a real query,
+  through the full `/v1/research` path, not just SearXNG in isolation.
 
 ## Setup performed
 
@@ -171,7 +192,12 @@ this specific host — each is fixed in code/build files, not worked around.
 | Check | Result |
 |---|---|
 | `GET /docs` | `200` |
-| `POST /v1/research`, `mode=online, execution_mode=blocking` | `200`, `status: complete` |
+| `POST /v1/research`, `mode=online, execution_mode=blocking` (before the SearXNG proxy fix below) | `200`, but `status: complete` with 0 documents — SearXNG's own engine queries weren't proxied yet, every engine timed out |
+| Same request, after both SearXNG proxy fixes (HTTP-proxy inbound) | `200`, `status: complete_with_failures` (some individual page crawls failed, unrelated — normal for a diverse result set), real cached + crawled documents with real markdown content, `duckduckgo`/`google cse`/`startpage` all contributing results |
+| SearXNG's own `/search?format=json`, direct (no proxy configured) | All 5 default engines: `timeout` |
+| Same, with `outgoing.proxies: socks5://xray:1080` | Still all `timeout`/`SSL error` — SearXNG's SOCKS5 client library breaks TLS over this tunnel (see below) |
+| Same, with `outgoing.proxies: http://xray:1081` (second xray inbound, HTTP CONNECT) | Real results, multiple engines contributing |
+| `httpx.get(..., proxy='socks5://xray:1080')` vs. SearXNG's own SOCKS5 client, same destinations (duckduckgo/google/wikipedia/brave) | httpx: all succeeded (`200`/`403`/`429` — real responses) proving the tunnel itself is fine; SearXNG: `anyio.EndOfStream` mid-TLS-handshake every time — isolated the failure to SearXNG's `httpx-socks`/`python_socks` library, not the proxy or destination |
 | `POST /v1/crawl`, real public URL, default (non-cn) proxy config | `202 queued` → worker completed, real markdown stored |
 | Raw `httpx` direct connection to an external site from inside `api` container, no proxy | `[Errno 111] Connection refused` |
 | Same request via `proxy='socks5://xray:1080'` | `200`, correct response body |

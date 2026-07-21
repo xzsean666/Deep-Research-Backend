@@ -30,6 +30,6 @@ RUN set -eux; \
 
 COPY entrypoint.py /entrypoint.py
 
-EXPOSE 1080
+EXPOSE 1080 1081
 
 ENTRYPOINT ["python3", "/entrypoint.py"]

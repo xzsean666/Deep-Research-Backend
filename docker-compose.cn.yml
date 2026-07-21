@@ -15,10 +15,20 @@
 # it. NET_ADMIN is required for the container to install its own iptables
 # rules in its own network namespace — scoped to this one container, not a
 # host-wide capability grant.
+# searxng's outgoing.proxies (deploy/searxng/settings.proxy.yml, sibling of
+# settings.yml) routes its own engine queries — a separate concern from
+# Crawl4AI's/the search providers' proxying above — through the same
+# `xray` SOCKS5 proxy. Without it, SearXNG's engines just time out on a
+# host where direct connections to them are blocked (confirmed live: all 5
+# default engines timed out with the plain settings.yml). Coupled to this
+# overlay file rather than a separate one for now since every deployment
+# that needs the vless proxy so far also uses this one.
 services:
   searxng:
     build:
       dockerfile: ../../docker/searxng/Dockerfile.cn
+    volumes:
+      - ./deploy/searxng/settings.proxy.yml:/etc/searxng/settings.yml:ro
   crawl4ai:
     build:
       dockerfile: ../../docker/crawl4ai/Dockerfile.cn
