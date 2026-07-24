@@ -19,12 +19,35 @@ class ResearchDocumentStatus(StrEnum):
     CRAWLED = "crawled"
     PENDING = "pending"
     FAILED = "failed"
+    # A result answered inline by a provider that computes its own answer
+    # (e.g. the weather-forecast provider) rather than crawling a webpage —
+    # see research_service.py's bypass of the cache/crawl pipeline for these.
+    COMPUTED = "computed"
 
 
 class ResearchStatus(StrEnum):
     COMPLETE = "complete"
     COMPLETE_WITH_FAILURES = "complete_with_failures"
     PARTIAL = "partial"
+
+
+class WeatherExtremum(StrEnum):
+    HIGHEST = "highest"
+    LOWEST = "lowest"
+
+
+class WeatherHint(BaseModel):
+    """Structured parameters for the weather-forecast search provider,
+    parsed by the calling trading bot from a weather-bracket market's own
+    question text (city/extremum/threshold) and end_date (target date) —
+    NOT re-derived here from the free-text `query`, which may be an
+    LLM-generated keyword extraction with no guaranteed structure. Field
+    names match the Rust `WeatherHint` struct exactly."""
+
+    city: str
+    market_end_date_utc: datetime
+    extremum: WeatherExtremum
+    threshold_celsius: float
 
 
 class ResearchRequest(BaseModel):
@@ -35,6 +58,10 @@ class ResearchRequest(BaseModel):
     # router resolves this, not the schema.
     execution_mode: ExecutionMode | None = None
     mode: RetrievalMode = RetrievalMode.ONLINE
+    # Only ever consumed by the weather-forecast provider (see
+    # composite_provider.py's per-source forwarding) — every other search
+    # source ignores this field entirely.
+    hints: WeatherHint | None = None
 
 
 class ResearchDocument(BaseModel):
@@ -64,4 +91,5 @@ class ResearchResponse(BaseModel):
     crawled: int = 0
     pending: int = 0
     failed: int = 0
+    computed: int = 0
     documents: list[ResearchDocument]

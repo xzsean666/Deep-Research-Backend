@@ -53,6 +53,19 @@ class Settings(BaseSettings):
     search_truth_social_max_results: int = 2
     search_truth_social_base_url: str = "https://truthsocial.com"
 
+    # Free, no-API-key weather forecast source (Open-Meteo: 10,000 calls/day,
+    # no auth) for weather-bracket markets specifically. Only ever does work
+    # when the caller supplies `hints` (see ResearchRequest.hints /
+    # WeatherSearchProvider) — otherwise it's a fast no-op, never guessing
+    # from the free-text query. High weight/low max_results because it's the
+    # single most targeted piece of evidence available on the (rare) queries
+    # where it fires at all, not a broad, always-relevant source like searxng.
+    search_weather_enabled: bool = False
+    search_weather_weight: float = 0.8
+    search_weather_max_results: int = 1
+    search_weather_geocoding_base_url: str = "https://geocoding-api.open-meteo.com"
+    search_weather_forecast_base_url: str = "https://api.open-meteo.com"
+
     search_composite_timeout_seconds: float = 15.0
 
     # Off by default — empty means every outbound call below behaves exactly

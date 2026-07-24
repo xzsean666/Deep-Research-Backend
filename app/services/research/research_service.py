@@ -12,9 +12,11 @@ from app.schemas.research import (
     ResearchResponse,
     ResearchStatus,
     RetrievalMode,
+    WeatherHint,
 )
 from app.services.document import normalize_url
 from app.services.search import SearchProvider, SearchResult, search_local
+from app.services.search.composite_provider import CompositeSearchProvider
 
 # SPEC.md §3 — full markdown is inlined up to this size; beyond it the
 # caller is pointed at GET /v1/documents/{id} instead. Not yet a config
@@ -103,8 +105,17 @@ async def _research_online(
     limit: int,
     refresh: bool,
     execution_mode: ExecutionMode,
+    hints: WeatherHint | None = None,
 ) -> ResearchResponse:
-    search_results = await search_provider.search(query, limit)
+    # `search_provider` is typed as the narrow 2-arg SearchProvider Protocol,
+    # but is only ever `CompositeSearchProvider` (which accepts `hints=`) when
+    # settings.search_provider == "composite" — calling `hints=` unconditionally
+    # would break the `searxng`-only default (SearXNGSearchProvider.search has
+    # no `hints` param at all).
+    if hints is not None and isinstance(search_provider, CompositeSearchProvider):
+        search_results = await search_provider.search(query, limit, hints=hints)
+    else:
+        search_results = await search_provider.search(query, limit)
 
     documents: list[ResearchDocument | None] = []
     # (index into documents, search_result, normalized_url, job) for anything not yet resolved
@@ -116,6 +127,23 @@ async def _research_online(
     # long — it's closed before we ever await a job.
     async with sessionmaker() as session:
         for search_result in search_results:
+            if search_result.source == "weather":
+                # Answered inline by the provider itself (a forecast lookup,
+                # not a webpage) — skip the cache-lookup/crawl-job pipeline
+                # entirely, and don't persist it: a forecast should be
+                # re-fetched fresh every call, not served stale from the
+                # documents cache as the target date approaches.
+                documents.append(
+                    ResearchDocument(
+                        url=search_result.url,
+                        normalized_url=normalize_url(search_result.url),
+                        title=search_result.title,
+                        summary=search_result.snippet,
+                        status=ResearchDocumentStatus.COMPUTED,
+                        search_rank=search_result.rank,
+                    )
+                )
+                continue
             normalized = normalize_url(search_result.url)
             existing = (
                 None
@@ -203,6 +231,7 @@ async def _research_online(
         crawled=counts[ResearchDocumentStatus.CRAWLED],
         pending=counts[ResearchDocumentStatus.PENDING],
         failed=counts[ResearchDocumentStatus.FAILED],
+        computed=counts[ResearchDocumentStatus.COMPUTED],
         documents=resolved_documents,
     )
 
@@ -233,6 +262,7 @@ async def research(
     refresh: bool,
     execution_mode: ExecutionMode,
     mode: RetrievalMode,
+    hints: WeatherHint | None = None,
 ) -> ResearchResponse:
     """Orchestrates search + cache lookup + crawl + merge. ARCHITECTURE.md §5."""
     if mode == RetrievalMode.SEMANTIC:
@@ -250,4 +280,5 @@ async def research(
         limit=limit,
         refresh=refresh,
         execution_mode=execution_mode,
+        hints=hints,
     )

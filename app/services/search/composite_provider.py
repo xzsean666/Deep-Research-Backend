@@ -3,6 +3,7 @@ import dataclasses
 import logging
 from collections import deque
 
+from app.schemas.research import WeatherHint
 from app.services.document import normalize_url
 from app.services.search.provider import SearchProvider, SearchResult
 
@@ -46,13 +47,21 @@ class CompositeSearchProvider:
         self._sources = sources
         self._per_source_timeout_seconds = per_source_timeout_seconds
 
-    async def _fetch(self, source: WeightedSource, query: str, limit: int) -> tuple[str, list[SearchResult]]:
+    async def _fetch(
+        self, source: WeightedSource, query: str, limit: int, hints: WeatherHint | None = None
+    ) -> tuple[str, list[SearchResult]]:
         fetch_limit = min(source.max_results, limit) if source.max_results is not None else limit
         if fetch_limit <= 0:
             return source.name, []
         try:
             async with asyncio.timeout(self._per_source_timeout_seconds):
-                raw = await source.provider.search(query, fetch_limit)
+                # `hints` reaches ONLY the weather source — every other
+                # source's call is untouched, so the shared SearchProvider
+                # Protocol and its other implementers need no changes.
+                if source.name == "weather":
+                    raw = await source.provider.search(query, fetch_limit, hints=hints)
+                else:
+                    raw = await source.provider.search(query, fetch_limit)
         except Exception:
             logger.warning(
                 "search source %r failed; continuing without it", source.name, exc_info=True
@@ -60,9 +69,11 @@ class CompositeSearchProvider:
             return source.name, []
         return source.name, [dataclasses.replace(r, source=source.name) for r in raw]
 
-    async def search(self, query: str, limit: int) -> list[SearchResult]:
+    async def search(
+        self, query: str, limit: int, hints: WeatherHint | None = None
+    ) -> list[SearchResult]:
         fetched = await asyncio.gather(
-            *(self._fetch(source, query, limit) for source in self._sources)
+            *(self._fetch(source, query, limit, hints) for source in self._sources)
         )
         by_name = dict(fetched)
 

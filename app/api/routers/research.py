@@ -29,4 +29,5 @@ async def create_research(
         refresh=body.refresh,
         execution_mode=execution_mode,
         mode=body.mode,
+        hints=body.hints,
     )

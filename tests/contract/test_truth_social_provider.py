@@ -151,6 +151,116 @@ async def test_falls_back_to_factbase_archive_when_primary_returns_empty():
     assert results[0].url == "https://truthsocial.com/@realDonaldTrump/998877"
 
 
+_FACTBASE_OFF_TOPIC_FIXTURE = {
+    "data": [
+        {
+            "platform": "Truth Social",
+            "date": "2026-07-15T18:54:07-04:00",
+            # Deliberately shares a bare year with the query below (both
+            # mention "2026") — this must NOT be enough to count as
+            # relevant on its own (see test_ignores_bare_year_overlap).
+            "text": "Effective August 1st, 2026, all Generic Drugs being brought into the "
+            "United States will continue to have a TARIFF of ZERO PERCENT",
+            "post_url": "https://truthsocial.com/@realDonaldTrump/111222",
+        },
+        {
+            "platform": "Truth Social",
+            "date": "2026-07-14T10:00:00-04:00",
+            "text": "Blame immigration chaos on Biden and Harris, not Trump",
+            "post_url": "https://truthsocial.com/@realDonaldTrump/333444",
+        },
+    ]
+}
+
+
+def _off_topic_fallback_transport() -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v2/search":
+            return httpx.Response(200, json={"statuses": []})
+        assert request.url.path == "/wp-json/factbase/v1/twitter"
+        return httpx.Response(200, json=_FACTBASE_OFF_TOPIC_FIXTURE)
+
+    return httpx.MockTransport(handler)
+
+
+async def test_factbase_archive_drops_results_unrelated_to_the_query():
+    """Regression test: the Factbase archive ignores its own `q` parameter
+    and always returns its most recent posts (confirmed live 2026-07-22),
+    so a query about something Trump never posted about must come back
+    empty rather than silently returning unrelated posts as evidence.
+    """
+    client = httpx.AsyncClient(transport=_off_topic_fallback_transport())
+    provider = TruthSocialSearchProvider(base_url="https://truthsocial.test", client=client)
+
+    results = await provider.search("Ankara highest temperature July 23", limit=10)
+
+    assert results == []
+
+
+async def test_ignores_bare_year_overlap():
+    """Regression test: a shared bare year (e.g. "2026") must not count as
+    relevance on its own — confirmed live, this exact query matched the
+    exact fixture text above via the year alone before this was excluded,
+    since almost every post and every market question is dated 2026.
+    """
+    client = httpx.AsyncClient(transport=_off_topic_fallback_transport())
+    provider = TruthSocialSearchProvider(base_url="https://truthsocial.test", client=client)
+
+    results = await provider.search("Ankara highest temperature July 23 2026", limit=10)
+
+    assert results == []
+
+
+_FACTBASE_SINGLE_WORD_COINCIDENCE_FIXTURE = {
+    "data": [
+        {
+            "platform": "Truth Social",
+            "date": "2026-07-05T12:00:00-04:00",
+            # Shares only the word "july" with the query below — a second
+            # live failure after the bare-year one: "july" alone isn't rare
+            # enough to mean these are about the same thing.
+            "text": "We got it through the great July Fourth Weekend. What kind of "
+            "animals would do such a thing to the Reflecting Pool?",
+            "post_url": "https://truthsocial.com/@realDonaldTrump/555666",
+        },
+    ]
+}
+
+
+def _single_word_coincidence_transport() -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v2/search":
+            return httpx.Response(200, json={"statuses": []})
+        assert request.url.path == "/wp-json/factbase/v1/twitter"
+        return httpx.Response(200, json=_FACTBASE_SINGLE_WORD_COINCIDENCE_FIXTURE)
+
+    return httpx.MockTransport(handler)
+
+
+async def test_ignores_single_generic_word_coincidence():
+    """Regression test: confirmed live 2026-07-22, "Ankara highest
+    temperature July 23 2026" matched an unrelated Reflecting-Pool post
+    purely because both mention "july" — a single shared calendar word
+    isn't enough for a query with several other, unmatched tokens.
+    """
+    client = httpx.AsyncClient(transport=_single_word_coincidence_transport())
+    provider = TruthSocialSearchProvider(base_url="https://truthsocial.test", client=client)
+
+    results = await provider.search("Ankara highest temperature July 23 2026", limit=10)
+
+    assert results == []
+
+
+async def test_factbase_archive_keeps_results_relevant_to_the_query():
+    client = httpx.AsyncClient(transport=_off_topic_fallback_transport())
+    provider = TruthSocialSearchProvider(base_url="https://truthsocial.test", client=client)
+
+    results = await provider.search("generic drugs tariff", limit=10)
+
+    assert len(results) == 1
+    assert results[0].url == "https://truthsocial.com/@realDonaldTrump/111222"
+
+
 def test_passes_proxy_to_default_client(monkeypatch):
     seen_kwargs = {}
 

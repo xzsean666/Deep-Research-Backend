@@ -7,6 +7,7 @@ from app.services.search.provider import SearchProvider, SearchResult
 from app.services.search.reddit_provider import RedditSearchProvider
 from app.services.search.searxng_provider import SearXNGSearchProvider
 from app.services.search.truth_social_provider import TruthSocialSearchProvider
+from app.services.search.weather_provider import WeatherSearchProvider
 
 
 def _build_composite(settings: Settings) -> SearchProvider:
@@ -55,6 +56,19 @@ def _build_composite(settings: Settings) -> SearchProvider:
                 ),
                 weight=settings.search_truth_social_weight,
                 max_results=settings.search_truth_social_max_results,
+            )
+        )
+    if settings.search_weather_enabled:
+        sources.append(
+            WeightedSource(
+                name="weather",
+                provider=WeatherSearchProvider(
+                    geocoding_base_url=settings.search_weather_geocoding_base_url,
+                    forecast_base_url=settings.search_weather_forecast_base_url,
+                    proxy=proxy,
+                ),
+                weight=settings.search_weather_weight,
+                max_results=settings.search_weather_max_results,
             )
         )
     # Next source (a news API, ...): same "if settings.search_<x>_enabled"
